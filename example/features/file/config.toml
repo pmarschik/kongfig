@@ -1,0 +1,3 @@
+host = "toml-server.local"
+port = 9002
+debug = true

@@ -1,0 +1,95 @@
+{
+// Package expr implements the pigeon-generated PEG parser for kongfig validate= expressions.
+//
+// Do not edit grammar_gen.go directly — regenerate via:
+//
+//	go generate ./validation/expr/
+//
+// Grammar summary:
+//
+//	Input     ← _ Expr (__ Expr)* _ EOF    implicit all(...) wrapper when > 1 top-level expr
+//	Expr      ← Call / Atom
+//	Call      ← Name '(' _ ArgList? _ ')'
+//	ArgList   ← Expr (__ Expr)*
+//	Atom      ← Number / StringLit / Name
+//	Name      ← [a-zA-Z][a-zA-Z0-9_-]*
+//	Number    ← [0-9]+('.'[0-9]+)?
+//	StringLit ← "'" [^']* "'"
+//	__        ← [ \t]+
+//	_         ← [ \t]*
+package expr
+}
+
+// Input is the top-level rule.
+// A space-separated list of expressions is wrapped in an implicit all(...) when
+// more than one expression is present: "required hostname" ≡ all(required hostname).
+Input <- _ first:Expr rest:SepExpr* _ EOF {
+    exprs := []Expr{first.(Expr)}
+    for _, r := range rest.([]any) {
+        exprs = append(exprs, r.(Expr))
+    }
+    if len(exprs) == 1 {
+        return exprs[0], nil
+    }
+    return Expr{Name: "all", Args: exprs}, nil
+}
+
+// SepExpr matches mandatory whitespace followed by an expression.
+// Used to parse space-separated lists at the top level and inside call argument lists.
+SepExpr <- __ e:Expr {
+    return e, nil
+}
+
+EOF <- !.
+
+// Expr tries a function call first; falls back to an atom.
+Expr <- Call / Atom
+
+// Call matches name(args...) where args are space-separated.
+Call <- name:Name "(" _ args:ArgList? _ ")" {
+    argList, _ := args.([]Expr)
+    if argList == nil {
+        argList = []Expr{} // non-nil marks it as a call (even zero-arg)
+    }
+    return Expr{Name: name.(string), Args: argList}, nil
+}
+
+// ArgList matches a non-empty, space-separated list of expressions inside a call.
+ArgList <- first:Expr rest:SepExpr* {
+    exprs := []Expr{first.(Expr)}
+    for _, r := range rest.([]any) {
+        exprs = append(exprs, r.(Expr))
+    }
+    return exprs, nil
+}
+
+// Atom matches a number, string literal, or identifier name.
+Atom <- v:(Number / StringLit / Name) {
+    return Expr{Name: v.(string)}, nil
+}
+
+// Name matches an identifier: a letter followed by letters, digits, underscores, or hyphens.
+Name <- [a-zA-Z][a-zA-Z0-9_-]* {
+    return string(c.text), nil
+}
+
+// Number matches an integer or decimal literal.
+Number <- [0-9]+ ("." [0-9]+)? {
+    return string(c.text), nil
+}
+
+// StringLit matches a single-quoted string; returns the inner content without quotes.
+// Single quotes are used (not double quotes) to avoid conflicts with Go struct tag
+// "value" delimiters when writing annotations in backtick-quoted struct tags.
+//
+//	F string `kongfig:"f,validate=pattern('[a-z]+')"`
+StringLit <- "'" [^']* "'" {
+    s := string(c.text)
+    return s[1 : len(s)-1], nil
+}
+
+// __ is mandatory whitespace (one or more spaces or tabs).
+__ <- [ \t]+
+
+// _ is optional whitespace (zero or more spaces or tabs).
+_ <- [ \t]*

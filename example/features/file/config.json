@@ -1,0 +1,5 @@
+{
+  "host": "json-server.local",
+  "port": 9003,
+  "debug": true
+}

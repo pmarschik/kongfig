@@ -1,0 +1,4 @@
+# Sample config for the minimal example.
+# Run: go run ./example/minimal -config=example/minimal/config.yaml
+host: myserver.local
+port: 9090

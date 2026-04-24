@@ -1,0 +1,18 @@
+go 1.26.2
+
+use (
+	.
+	./example/common
+	./example/features
+	./example/full
+	./example/minimal
+	./kong
+	./kong/charming
+	./parsers/toml
+	./parsers/yaml
+	./providers/file
+	./providers/file/discover/vcs
+	./style/charming
+)
+
+replace github.com/pmarschik/kong-charming => ../github@pmarschik~kong-charming

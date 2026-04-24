@@ -1,0 +1,3 @@
+host: yaml-server.local
+port: 9001
+debug: true

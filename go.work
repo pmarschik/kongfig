@@ -1,0 +1,18 @@
+go 1.26.2
+
+use (
+	.
+	./example/common
+	./example/features
+	./example/full
+	./example/minimal
+	./kong/charming
+	./kong/provider
+	./kong/resolver
+	./kong/show
+	./parsers/toml
+	./parsers/yaml
+	./providers/file
+	./providers/file/discover/vcs
+	./style/charming
+)

@@ -1,0 +1,10 @@
+# Sample config for the kongfig full example.
+# Run: go run ./example/full --config=example/full/config.yaml
+host: full-server.local
+port: 9090
+log-level: debug
+api-key: my-api-key
+db:
+  host: db.example.com
+  port: 5432
+  password: prod-password

@@ -1,0 +1,63 @@
+# Conventional commit scopes for this project.
+# Keep this list aligned with the public package/module surface and repo-level work.
+# Used by agents (via AGENTS.md reference) and optionally by cocogitto for enforcement.
+#
+# Component scopes:
+# - core             root package / load-get-render pipeline / public API glue
+# - casing           casing/ package — name mapper functions (KebabCase, SnakeCase, …)
+# - schema           schema/ package — FieldTag, ParseFieldTag, RedactedPaths, SplitPaths, …
+# - validation       validation package
+# - migration        migrate.go — AddRename, MigrationPolicy, discover.Deprecated
+# - mergefuncs       merge strategy helpers
+# - parsers          cross-parser work
+# - parsers/json     JSON parser
+# - parsers/yaml     YAML parser module
+# - parsers/toml     TOML parser module
+# - providers        cross-provider work
+# - providers/env    env provider
+# - providers/file   file provider module
+# - providers/structs struct-backed defaults/env provider
+# - style            cross-style work
+# - style/plain      plain styler
+# - style/charming   charming styler module
+# - kong             cross-kong integration work
+# - kong/resolver    kong resolver module
+# - kong/provider    kong provider module
+# - kong/show        kong show module
+# - kong/charming    kong charming module
+# - examples         runnable examples
+#
+# Meta scopes:
+# - docs        documentation and ADRs
+# - build       build tooling / mise / local tasks
+# - ci          GitHub Actions and CI automation
+# - release     changelog, versioning, release flow, cog/git-cliff config
+scopes = [
+  "core",
+  "casing",
+  "schema",
+  "validation",
+  "migration",
+  "mergefuncs",
+  "parsers",
+  "parsers/json",
+  "parsers/yaml",
+  "parsers/toml",
+  "providers",
+  "providers/env",
+  "providers/file",
+  "providers/structs",
+  "style",
+  "style/plain",
+  "style/charming",
+  "kong",
+  "kong/resolver",
+  "kong/provider",
+  "kong/show",
+  "kong/charming",
+  "examples",
+  "docs",
+  "build",
+  "ci",
+  "release",
+]

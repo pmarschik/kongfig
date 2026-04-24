@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Run a feature demo"
+#MISE alias="example:feat"
+#USAGE arg "<name>" help="Feature to run: charming, file, kong, layers, redacted, struct-tags, xdg"
+#USAGE complete "<name>" run="ls ./example/features/"
+set -euo pipefail
+feature="${1:?usage: mise run example:feature <name>}"
+go run "./example/features/${feature}" "${@:2}"

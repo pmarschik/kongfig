@@ -1,0 +1,14 @@
+version: 2
+project_name: kongfig
+
+builds:
+  - skip: true
+
+release:
+  github:
+    owner: pmarschik
+    name: kongfig
+  prerelease: auto
+
+changelog:
+  disable: true

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run full example — deep customization with charming, per-layer colors, all parsers"
+set -euo pipefail
+go run ./example/full "${@}"

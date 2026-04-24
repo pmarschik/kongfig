@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run common example — typical app setup with env, file, kong providers"
+set -euo pipefail
+go run ./example/common "${@}"

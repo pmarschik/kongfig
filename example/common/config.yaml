@@ -1,0 +1,9 @@
+# Sample config for the kongfig common example.
+# Run: go run ./example/common --config=example/common/config.yaml
+host: myserver.local
+port: 9090
+log-level: debug
+api-key: my-api-key
+db:
+  url: postgres://db.example.com/prod
+  password: prod-password

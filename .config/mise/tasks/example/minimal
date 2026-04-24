@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run minimal example — bare-bones kongfig setup"
+set -euo pipefail
+go run ./example/minimal "${@}"

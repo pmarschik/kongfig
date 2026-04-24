@@ -1,0 +1,10 @@
+# Sample TOML config for the kongfig common example.
+# Run: go run ./example/common --config=example/common/config.toml
+host = "toml-server.local"
+port = 9091
+log-level = "warn"
+api-key = "toml-api-key"
+
+[db]
+url = "postgres://toml-db.example.com/prod"
+password = "toml-password"

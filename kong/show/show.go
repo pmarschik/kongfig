@@ -6,6 +6,7 @@ package show
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -234,7 +235,7 @@ func renderData(ctx context.Context, w io.Writer, format string, defaultRenderer
 		if defaultRenderer != nil {
 			return defaultRenderer.Bind(s).Render(ctx, w, data)
 		}
-		return fmt.Errorf("no renderer available: register a parser or set DefaultRenderer on show.Flags")
+		return errors.New("no renderer available: register a parser or set DefaultRenderer on show.Flags")
 	}
 }
 
@@ -355,9 +356,9 @@ func effectiveFormat(explicit string, k *kongfig.Kongfig) string {
 // Used by [Flags.Render] and [SimpleFlags.Render] for the non-layers path.
 type dataRenderer struct {
 	s               kongfig.Styler
+	defaultRenderer kongfig.OutputProvider
 	renderers       map[string]kongfig.OutputProvider
 	format          string
-	defaultRenderer kongfig.OutputProvider
 }
 
 func (r *dataRenderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigData) error {

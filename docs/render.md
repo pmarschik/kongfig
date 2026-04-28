@@ -82,6 +82,32 @@ if err := renderMap(ctx, &buf, s, data, true); err != nil {
 return render.AlignAnnotations(buf.String(), w)
 ```
 
+### `render.AlignAnnotationsCtx(ctx context.Context, raw string, w io.Writer) error`
+
+Like `AlignAnnotations` but reads the terminal width from `ctx` (set via `render.WithTTYSize`
+or `render.TTYSizeKey`). When the terminal is too narrow to fit the annotation inline
+(`maxValueWidth + 1 + maxAnnotationWidth > cols`), the annotation is written as a comment
+line **above** the value line, indented to match:
+
+```
+# from file.yaml
+host: localhost
+# from environment
+port: 8080
+```
+
+Prefer `AlignAnnotationsCtx` over `AlignAnnotations` in renderer implementations that
+accept a `context.Context` — it degrades gracefully when no terminal size is set (falls
+back to inline alignment).
+
+```go
+var buf bytes.Buffer
+if err := renderMap(ctx, &buf, s, data, true); err != nil {
+    return err
+}
+return render.AlignAnnotationsCtx(ctx, buf.String(), w)
+```
+
 ### `render.VisualWidth(s string) int`
 
 Returns the visible character width of `s`, stripping ANSI escape codes. Used
@@ -116,7 +142,7 @@ Renderers should call these instead of reading raw context values directly.
 | --------------------------------- | --------------------- | -------------------------------------------------- |
 | `render.NoComments(ctx)`          | `bool`                | True when `WithRenderNoComments()` is active       |
 | `render.HelpTexts(ctx)`           | `map[string]string`   | Per-path help texts (`nil` when `NoComments`)      |
-| `render.HelpText(ctx, path)`      | `string`              | Help text for a specific path (`""` if none)       |
+| `render.HelpText(ctx, path)`      | `string`              | Help text for path; prefix-matched, emitted once   |
 | `render.AlignSources(ctx)`        | `bool`                | True (default) unless `WithRenderNoAlignSources()` |
 | `render.FileRawPaths(ctx)`        | `bool`                | True when `WithRenderFileRawPaths()` is active     |
 | `render.FieldNames(ctx)`          | `PathFieldNames`      | Path → SourceID → field name map                   |
@@ -124,10 +150,25 @@ Renderers should call these instead of reading raw context values directly.
 | `render.VerboseSources(ctx)`      | `map[string][]string` | Per-path verbose source list                       |
 | `render.FilterSourceFromCtx(ctx)` | `[]string`            | Effective filter source list from context          |
 
+#### Help text rendering
+
+`render.HelpText(ctx, path)` should be called by renderers before emitting each key.
+It performs **prefix matching**: a help text registered for `"labels"` also fires for
+`"labels.key1"` and `"labels[0]"`. Each matched key is emitted **at most once per
+render call** — subsequent paths matched by the same key return `""`. Renderers should
+emit the result as a comment line above the key:
+
+```go
+if help := render.HelpText(ctx, path); help != "" {
+    fmt.Fprintf(w, "%s# %s\n", indent, help)
+}
+```
+
 ### TTY size
 
-`render.TTYSizeKey` and `render.WithTTYSize(cols, rows int)` let renderers that adapt
-to terminal width read the terminal dimensions:
+`render.WithTTYSize(cols, rows int)` injects terminal dimensions as a `RenderOption`.
+`AlignAnnotationsCtx` reads this automatically. Renderers that do their own line-wrapping
+can also access it directly:
 
 ```go
 tty, _ := render.TTYSizeKey.Read(ctx)
@@ -135,6 +176,8 @@ if tty.Cols > 0 {
     // use tty.Cols for line wrapping
 }
 ```
+
+Pass `(0, 0)` to explicitly clear a previously set size.
 
 ---
 

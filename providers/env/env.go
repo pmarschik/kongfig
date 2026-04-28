@@ -199,7 +199,7 @@ func (r *envRenderer) Render(ctx context.Context, w io.Writer, data kongfig.Conf
 	if err := renderEnvMap(ctx, &buf, r.s, data, r.prefix, "", true); err != nil {
 		return err
 	}
-	return render.AlignAnnotations(buf.String(), w)
+	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
 // envKeyResult describes how a key should be rendered.

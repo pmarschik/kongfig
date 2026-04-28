@@ -60,6 +60,12 @@ Use `structs.TagDefaults[T]()` to drive defaults from `default=` struct tag
 annotations instead of a populated instance — see
 [struct-tags.md](docs/struct-tags.md#default-option).
 
+Use `schema.HelpTextPaths[T]()` to collect `help='...'` struct tag annotations as a
+`map[string]string` and pass them to `WithRenderHelpTexts` to emit human descriptions
+as comment lines above each key. Supports prefix matching (one annotation covers all
+keys in a map/slice field) and emits each text at most once per render call — see
+[struct-tags.md](docs/struct-tags.md#help-option).
+
 See [`example/minimal`](example/minimal/) for the full minimal example.
 
 ### Get options
@@ -342,7 +348,7 @@ For features beyond the above:
   `WithCodec`/`RegisterCodec`, `TypedDecodeHook` (escape hatch), `AddTransform`, `MetaKey`/path metadata
 - [docs/styling.md](docs/styling.md) — charming styler, custom `Styler` implementations, renderer conventions
 - [docs/struct-tags.md](docs/struct-tags.md) — full struct tag reference (`default=`,
-  `redacted`, `env`, `config`, split separators)
+  `redacted`, `env`, `config`, split separators, `help=`)
 - [docs/validation.md](docs/validation.md) — composite rule helpers, custom annotations,
   registry constructors, `ValidateOnLoad`
 - [docs/provenance.md](docs/provenance.md) — source labels, `FilterSource`, provenance API

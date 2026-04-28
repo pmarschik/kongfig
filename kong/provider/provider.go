@@ -236,7 +236,7 @@ func (r *flagsRenderer) Render(ctx context.Context, w io.Writer, data kongfig.Co
 	if err := renderFlags(ctx, &buf, r.s, data, "", true); err != nil {
 		return err
 	}
-	return render.AlignAnnotations(buf.String(), w)
+	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
 // resolveFlagKey resolves the --flag key using registered field names.

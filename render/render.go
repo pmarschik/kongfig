@@ -40,7 +40,21 @@ func VisualWidth(s string) int {
 // AlignAnnotations post-processes rendered output lines that contain [AnnMarker],
 // padding each value part to the same column before its annotation.
 // Lines without [AnnMarker] are written as-is. Trailing newline in raw is consumed.
+// Use [AlignAnnotationsCtx] to enable TTY-width-aware above-line fallback.
 func AlignAnnotations(raw string, w io.Writer) error {
+	return writeAlignedAnnotations(raw, w, 0)
+}
+
+// AlignAnnotationsCtx is like [AlignAnnotations] but reads the terminal width from
+// ctx (set via [WithTTYSize]). When the terminal is too narrow to fit the annotation
+// inline (maxValueWidth + 1 + maxAnnotationWidth > cols), the annotation is instead
+// written as a comment line above the value line, indented to match the value.
+func AlignAnnotationsCtx(ctx context.Context, raw string, w io.Writer) error {
+	tty, _ := TTYSizeKey.Read(ctx)
+	return writeAlignedAnnotations(raw, w, tty.Cols)
+}
+
+func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
 
 	type entry struct {
@@ -50,6 +64,7 @@ func AlignAnnotations(raw string, w io.Writer) error {
 	}
 	parsed := make([]entry, len(lines))
 	maxVW := 0
+	maxAnnVW := 0
 	for i, line := range lines {
 		parts := strings.SplitN(line, AnnMarker, 2)
 		e := entry{content: parts[0]}
@@ -57,21 +72,44 @@ func AlignAnnotations(raw string, w io.Writer) error {
 			e.ann = parts[1]
 		}
 		e.vw = VisualWidth(e.content)
-		if e.ann != "" && e.vw > maxVW {
-			maxVW = e.vw
+		if e.ann != "" {
+			if e.vw > maxVW {
+				maxVW = e.vw
+			}
+			if annVW := VisualWidth(e.ann); annVW > maxAnnVW {
+				maxAnnVW = annVW
+			}
 		}
 		parsed[i] = e
 	}
 
+	// Fall back to above-line annotations when terminal is too narrow for inline layout.
+	aboveLine := cols > 0 && maxVW+1+maxAnnVW > cols
+
 	for _, e := range parsed {
-		if e.ann == "" {
+		switch {
+		case e.ann == "":
 			_, _ = fmt.Fprintln(w, e.content)
-		} else {
+		case aboveLine:
+			indent := leadingWhitespace(e.content)
+			_, _ = fmt.Fprintln(w, indent+strings.TrimLeft(e.ann, " "))
+			_, _ = fmt.Fprintln(w, e.content)
+		default:
 			pad := strings.Repeat(" ", maxVW-e.vw+1)
 			_, _ = fmt.Fprintln(w, e.content+pad+e.ann)
 		}
 	}
 	return nil
+}
+
+// leadingWhitespace returns the leading spaces/tabs from s.
+func leadingWhitespace(s string) string {
+	for i, c := range s {
+		if c != ' ' && c != '\t' {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // BaseStyler is a no-op [kongfig.Styler] that returns every token unchanged.
@@ -162,14 +200,53 @@ func HelpTexts(ctx context.Context) map[string]string {
 	return v
 }
 
-// HelpText returns the help text for path from ctx, or "" if not set or if
-// NoComments is active.
+// HelpText returns the help text for path from ctx, or "" if not set, not matched,
+// or NoComments is active.
+//
+// Matching prefers an exact key first, then falls back to the longest registered key
+// that is a strict prefix of path (separated by "." or "["). This means a help text
+// registered for "labels" matches rendered leaf paths like "labels.key1" or
+// "labels[0]", making it natural to annotate map and slice fields via
+// schema.HelpTextPaths.
+//
+// When [kongfig.WithRenderHelpTextsOnce] is active, the matched help text key is
+// marked as seen on first use; subsequent calls for paths matched by the same key
+// return "" so the comment is emitted at most once per render call.
 func HelpText(ctx context.Context, path string) string {
 	texts := HelpTexts(ctx)
-	if texts == nil {
+	if len(texts) == 0 {
 		return ""
 	}
-	return texts[path]
+	text, matchedKey := helpTextMatch(texts, path)
+	if text == "" {
+		return ""
+	}
+	seenPtr, _ := kongfig.RenderHelpTextsSeenKey.Read(ctx)
+	if seenPtr != nil {
+		if (*seenPtr)[matchedKey] {
+			return ""
+		}
+		(*seenPtr)[matchedKey] = true
+	}
+	return text
+}
+
+// helpTextMatch returns the help text and the key it was matched under for path.
+// Exact match wins; otherwise the longest prefix key wins.
+// A key k is a prefix of path when path == k+".<suffix>" or path == k+"[<suffix>".
+func helpTextMatch(texts map[string]string, path string) (text, key string) {
+	if t, ok := texts[path]; ok {
+		return t, path
+	}
+	for k, t := range texts {
+		if !strings.HasPrefix(path, k+".") && !strings.HasPrefix(path, k+"[") {
+			continue
+		}
+		if len(k) > len(key) {
+			key, text = k, t
+		}
+	}
+	return text, key
 }
 
 // FieldNames returns the path → SourceID → field name map from ctx.

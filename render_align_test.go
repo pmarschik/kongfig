@@ -83,3 +83,52 @@ func TestEnvRenderer_AlignSources(t *testing.T) {
 		}
 	}
 }
+
+func TestAlignAnnotationsCtx_AboveLine(t *testing.T) {
+	// With a narrow terminal (cols=20), annotations that would overflow inline
+	// should be placed as comment lines above the value line.
+	raw := "host: localhost" + render.AnnMarker + "  # defaults\n" +
+		"port: 8080" + render.AnnMarker + "  # defaults\n"
+
+	// "host: localhost" is 15 chars; "  # defaults" is 12 chars: 15+1+12=28 > 20.
+	ctx := render.TTYSizeKey.WithCtx(context.Background(), render.TTYSize{Cols: 20})
+
+	var buf bytes.Buffer
+	if err := render.AlignAnnotationsCtx(ctx, raw, &buf); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	// Expect 4 lines: annotation + value for each of the 2 entries.
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 lines (annotation above each value), got %d:\n%s", len(lines), buf.String())
+	}
+	if !strings.HasPrefix(lines[0], "# ") {
+		t.Errorf("line 0 should be annotation comment, got %q", lines[0])
+	}
+	if lines[1] != "host: localhost" {
+		t.Errorf("line 1 should be value line, got %q", lines[1])
+	}
+}
+
+func TestAlignAnnotationsCtx_InlineWhenWideEnough(t *testing.T) {
+	// With a wide terminal, inline alignment should be used as normal.
+	raw := "host: localhost" + render.AnnMarker + "  # defaults\n" +
+		"port: 8080" + render.AnnMarker + "  # defaults\n"
+
+	ctx := render.TTYSizeKey.WithCtx(context.Background(), render.TTYSize{Cols: 120})
+
+	var buf bytes.Buffer
+	if err := render.AlignAnnotationsCtx(ctx, raw, &buf); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 inline lines, got %d:\n%s", len(lines), buf.String())
+	}
+	// Annotations should be aligned at the same column.
+	col0 := strings.Index(lines[0], "# defaults")
+	col1 := strings.Index(lines[1], "# defaults")
+	if col0 != col1 {
+		t.Errorf("annotation columns differ: line0=%d, line1=%d\n%s", col0, col1, buf.String())
+	}
+}

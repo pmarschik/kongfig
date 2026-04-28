@@ -129,10 +129,10 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 		return err
 	}
 	fmt.Fprintln(&buf, r.s.Syntax("}"))
-	return render.AlignAnnotations(buf.String(), w)
+	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-//nolint:gocognit,cyclop // complex recursive renderer, intentional
+//nolint:gocognit // complex recursive renderer, intentional
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, data kongfig.ConfigData, prefix string, depth int, align bool) error {
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -141,7 +141,6 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, dat
 	sort.Strings(keys)
 
 	pad := strings.Repeat(p.indent(), depth)
-	helpTexts := render.HelpTexts(ctx)
 
 	for i, k := range keys {
 		v := data[k]
@@ -178,10 +177,8 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, dat
 			leafVal = v
 		}
 
-		if helpTexts != nil {
-			if help, ok := helpTexts[path]; ok {
-				fmt.Fprintf(w, "%s%s\n", pad, s.Comment("// "+help))
-			}
+		if help := render.HelpText(ctx, path); help != "" {
+			fmt.Fprintf(w, "%s%s\n", pad, s.Comment("// "+help))
 		}
 
 		valBytes, _ := json.Marshal(leafVal) //nolint:errcheck // Marshal of already-valid data cannot fail

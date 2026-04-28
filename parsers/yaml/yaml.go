@@ -72,10 +72,10 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 	if err := renderMap(ctx, &buf, r.s, data, "", 0, true); err != nil {
 		return err
 	}
-	return render.AlignAnnotations(buf.String(), w)
+	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-//nolint:gocognit,cyclop // complex recursive renderer, intentional
+//nolint:gocognit // complex recursive renderer, intentional
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix string, indent int, align bool) error {
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -84,7 +84,6 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 	sort.Strings(keys)
 
 	pad := strings.Repeat("  ", indent)
-	helpTexts := render.HelpTexts(ctx)
 
 	for _, k := range keys {
 		v := data[k]
@@ -110,10 +109,8 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		// Unwrap RenderedValue
 		rv, isRV := v.(kongfig.RenderedValue)
 
-		if helpTexts != nil {
-			if help, ok := helpTexts[path]; ok {
-				fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
-			}
+		if help := render.HelpText(ctx, path); help != "" {
+			fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
 		}
 
 		var formatted string

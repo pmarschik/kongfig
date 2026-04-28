@@ -82,6 +82,38 @@ are omitted, unlike `structs.Defaults(instance)` which includes all non-zero fie
 
 ---
 
+## help= option
+
+`kongfig:"name,help='description'"` annotates a field with a human-readable description.
+`schema.HelpTextPaths[T]()` reflects on `T` and returns a `map[string]string` of dot-path
+→ help text, which can be passed directly to `WithRenderHelpTexts`:
+
+```go
+type Config struct {
+    Host     string `kongfig:"host,default=localhost,help='hostname or IP to listen on'"`
+    Port     int    `kongfig:"port,default=8080,help='TCP port'"`
+    Labels   map[string]string `kongfig:"labels,help='arbitrary key=value labels'"`
+}
+
+texts := schema.HelpTextPaths[Config]()
+// {"host": "hostname or IP to listen on", "port": "TCP port", "labels": "arbitrary key=value labels"}
+
+kf.RenderWith(ctx, w, renderer, kongfig.WithRenderHelpTexts(texts))
+```
+
+Use single-quoted values to allow commas and equals signs:
+
+```go
+Sep string `kongfig:"sep,help='separator; default is ','"`
+```
+
+**Prefix matching for maps and slices**: when a field's path is `"labels"`, the help text
+also fires for rendered leaf paths like `"labels.key1"` and `"labels[0]"`. Each help text
+is emitted at most once per render call (first match wins; subsequent paths covered by the
+same key are silent).
+
+---
+
 ## redacted option
 
 `kongfig:"name,redacted"` marks a field as sensitive. `structs.RedactedPaths[T]()` reflects on `T` and returns the set of dot-paths that are redacted.

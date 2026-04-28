@@ -87,6 +87,7 @@ var (
 	RenderNoAlignSourcesKey = NewRenderOptionsKey[bool]()
 	renderRedactedPathsKey  = NewRenderOptionsKey[map[string]bool]()
 	renderRedactFnKey       = NewRenderOptionsKey[func(string, string) string]()
+	RenderHelpTextsSeenKey  = NewRenderOptionsKey[*map[string]bool]()
 )
 
 // renderOptions is the options bag for render configuration.
@@ -116,8 +117,16 @@ func WithRenderVerboseSources(sources map[string][]string) RenderOption {
 }
 
 // WithRenderHelpTexts sets per-path help text shown as comments above each key.
+// Each help text key is emitted at most once per render call: once a key fires
+// (by exact or prefix match), subsequent paths that match the same key are skipped.
+// Each call to WithRenderHelpTexts creates a fresh seen-set, so concurrent render
+// calls each get independent tracking.
 func WithRenderHelpTexts(texts map[string]string) RenderOption {
-	return RenderHelpTextsKey.Bind(texts)
+	seen := make(map[string]bool)
+	return func(ro *renderOptions) {
+		RenderHelpTextsKey.Bind(texts)(ro)
+		RenderHelpTextsSeenKey.Bind(&seen)(ro)
+	}
 }
 
 // WithRenderFileRawPaths instructs file source annotations to display the raw
@@ -187,11 +196,13 @@ func WithRenderNoAlignSourcesCtx(ctx context.Context) context.Context {
 	return RenderNoAlignSourcesKey.WithCtx(ctx, true)
 }
 
-// WithRenderHelpTextsCtx returns a context with the given help texts set, for use
-// in tests or direct calls to renderer implementations outside [Kongfig.RenderWith].
-// In production code, prefer [WithRenderHelpTexts] passed to [Kongfig.RenderWith].
+// WithRenderHelpTextsCtx returns a context with the given help texts and a fresh
+// seen-set injected, for use in tests or direct calls to renderer implementations
+// outside [Kongfig.RenderWith]. In production code, prefer [WithRenderHelpTexts].
 func WithRenderHelpTextsCtx(ctx context.Context, texts map[string]string) context.Context {
-	return RenderHelpTextsKey.WithCtx(ctx, texts)
+	seen := make(map[string]bool)
+	ctx = RenderHelpTextsKey.WithCtx(ctx, texts)
+	return RenderHelpTextsSeenKey.WithCtx(ctx, &seen)
 }
 
 // RenderFilterSourceFromCtx returns the effective filter source list by merging

@@ -401,3 +401,55 @@ func (*trackingStyler) SourceData(s string) string    { return s }
 func (*trackingStyler) SourceKey(s string) string     { return s }
 func (*trackingStyler) Redacted(s string) string      { return s }
 func (*trackingStyler) Codec(s string) string         { return s }
+
+// --- HelpText prefix matching and WithRenderHelpTextsOnce ---
+
+func TestRenderHelpTexts_PrefixMatch(t *testing.T) {
+	// Help text key "labels" should prefix-match leaf paths "labels.env" and "labels.team".
+	// "Once" is the default, so the comment appears exactly once (on the first match).
+	data := kongfig.ConfigData{
+		"labels": kongfig.ConfigData{
+			"env":  "production",
+			"team": "platform",
+		},
+	}
+	helps := map[string]string{"labels": "key=value metadata tags"}
+	ctx := kongfig.WithRenderHelpTextsCtx(context.Background(), helps)
+
+	var buf bytes.Buffer
+	r := jsonparser.WithComments.Bind(plainStyler{})
+	if err := r.Render(ctx, &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "key=value metadata tags") {
+		t.Errorf("expected prefix-matched help comment in output, got:\n%s", out)
+	}
+	if count := strings.Count(out, "key=value metadata tags"); count != 1 {
+		t.Errorf("expected exactly 1 occurrence (once is default), got %d:\n%s", count, out)
+	}
+}
+
+func TestRenderHelpTextsOnce_SuppressDuplicates(t *testing.T) {
+	// WithRenderHelpTextsCtx always initializes "once" tracking — prefix-matched
+	// keys should fire only on the first matching leaf path.
+	data := kongfig.ConfigData{
+		"labels": kongfig.ConfigData{
+			"env":  "production",
+			"team": "platform",
+		},
+	}
+	helps := map[string]string{"labels": "key=value metadata tags"}
+	ctx := kongfig.WithRenderHelpTextsCtx(context.Background(), helps)
+
+	var buf bytes.Buffer
+	r := jsonparser.WithComments.Bind(plainStyler{})
+	if err := r.Render(ctx, &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	count := strings.Count(out, "key=value metadata tags")
+	if count != 1 {
+		t.Errorf("expected help comment exactly once (once is default), got %d times:\n%s", count, out)
+	}
+}

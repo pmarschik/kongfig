@@ -54,17 +54,18 @@ Render options are passed as `RenderOption` values to `k.Render`, `k.RenderWith`
 that is injected into a `context.Context` and passed through to `Renderer.Render(ctx, w, data)`.
 Renderers read options via accessors in the `render` sub-package.
 
-| Option                                                  | Effect                                                                                                                                     |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `WithRenderNoComments()`                                | Suppress all comment output (help texts + source annotations).                                                                             |
-| `WithRenderShowRedacted()`                              | Reveal values that would otherwise be redacted.                                                                                            |
-| `WithRenderFilterSource(filters []string)`              | Source filter list. Empty = show all. `"env"` = only env. `"no-defaults"` = exclude defaults. See [Provenance & Filtering](provenance.md). |
-| `WithRenderHelpTexts(texts map[string]string)`          | Per-path human descriptions emitted as comments above keys.                                                                                |
-| `WithRenderVerboseSources(sources map[string][]string)` | Enables `[env.tag, env.kong]` multi-source annotation expansion.                                                                           |
-| `WithRenderFileRawPaths()`                              | File source annotations show the raw canonical path instead of the display path.                                                           |
-| `WithRenderGroupEnvLayers()`                            | In `RenderLayers`, merge all `env.*` layers into one before iteration.                                                                     |
-| `WithRenderFormat(format string)`                       | Output format: `"yaml"`, `"toml"`, `"json"`, `"env"`, `"flags"`.                                                                           |
-| `WithRenderNoAlignSources()`                            | Disable column-alignment of source annotation comments.                                                                                    |
+| Option                                                  | Effect                                                                                                                                                                                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WithRenderNoComments()`                                | Suppress all comment output (help texts + source annotations).                                                                                                                                                           |
+| `WithRenderShowRedacted()`                              | Reveal values that would otherwise be redacted.                                                                                                                                                                          |
+| `WithRenderFilterSource(filters []string)`              | Source filter list. Empty = show all. `"env"` = only env. `"no-defaults"` = exclude defaults. See [Provenance & Filtering](provenance.md).                                                                               |
+| `WithRenderHelpTexts(texts map[string]string)`          | Per-path human descriptions emitted as comments above keys. Supports prefix matching (parent path covers map/slice leaves). Each text is emitted at most once per render call. Populate via `schema.HelpTextPaths[T]()`. |
+| `WithRenderVerboseSources(sources map[string][]string)` | Enables `[env.tag, env.kong]` multi-source annotation expansion.                                                                                                                                                         |
+| `WithRenderFileRawPaths()`                              | File source annotations show the raw canonical path instead of the display path.                                                                                                                                         |
+| `WithRenderGroupEnvLayers()`                            | In `RenderLayers`, merge all `env.*` layers into one before iteration.                                                                                                                                                   |
+| `WithRenderFormat(format string)`                       | Output format: `"yaml"`, `"toml"`, `"json"`, `"env"`, `"flags"`.                                                                                                                                                         |
+| `WithRenderNoAlignSources()`                            | Disable column-alignment of source annotation comments.                                                                                                                                                                  |
+| `render.WithTTYSize(cols, rows int)`                    | Set terminal dimensions. `AlignAnnotationsCtx` uses this to fall back to above-line annotations when the terminal is too narrow for inline layout.                                                                       |
 
 ### Context accessors (in `render` package)
 

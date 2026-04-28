@@ -14,5 +14,3 @@ use (
 	./providers/file/discover/vcs
 	./style/charming
 )
-
-replace github.com/pmarschik/kong-charming => ../github@pmarschik~kong-charming

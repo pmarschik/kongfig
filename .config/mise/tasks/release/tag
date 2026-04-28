@@ -75,16 +75,7 @@ for mod in "${MONOREPO_MODULES[@]}"; do
 done
 success "Tagged sub-modules: ${version}"
 
-# ── push ─────────────────────────────────────────────────────────────────────
-if [[ "${VCS}" == "jj" ]]; then
-  echo ""
-  echo "Push the release (requires hardware key):"
-  echo "  jj git push --all"
-  echo "  git push --tags"
-else
-  git push --follow-tags
-fi
-
 echo ""
-echo -e "  ${green}${bold}🚀 GitHub Actions will create the release automatically.${reset}"
+echo -e "  Review tags, then run:"
+echo -e "  ${bold}mise run release:push${reset}"
 echo ""

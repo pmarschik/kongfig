@@ -6,7 +6,7 @@
 // The key types and functions in this package are:
 //   - [ParseFieldTag] — parses a kongfig struct tag into a [FieldTag]
 //   - [ValidateKeyName] — validates a single key segment
-//   - [RedactedPaths], [SplitPaths], [MapSplitPaths], [ConfigPaths] — reflect over T
+//   - [RedactedPaths], [SplitPaths], [MapSplitPaths], [ConfigPaths], [HelpTextPaths] — reflect over T
 //   - [DefaultNameMapper] — the fallback name mapper used by [ParseFieldTag]
 package schema
 
@@ -322,6 +322,29 @@ func MapSplitPaths[T any]() map[string]MapSplitSpec {
 	if len(out) == 0 {
 		return nil
 	}
+	return out
+}
+
+// HelpTextPaths reflects on T and returns a map of dot-path → help text for fields
+// whose kongfig tag includes a help='...' extra. The result can be passed directly
+// to [kongfig.WithRenderHelpTexts].
+//
+// Map and slice fields are included as their struct-level path (e.g. "labels" for
+// a map[string]string field), so help text is prefix-matched against rendered leaf
+// paths by [kongfig/render.HelpText]. Returns nil when no fields carry a help= extra.
+func HelpTextPaths[T any]() map[string]string {
+	var out map[string]string
+	walkStructFields(reflect.TypeFor[T](), "", func(field reflect.StructField, path string, _ reflect.Type) {
+		ft := ParseFieldTag(field.Tag.Get("kongfig"), field.Name)
+		help, ok := ParseExtraValue(ft.Extras, "help")
+		if !ok {
+			return
+		}
+		if out == nil {
+			out = make(map[string]string)
+		}
+		out[path] = help
+	})
 	return out
 }
 

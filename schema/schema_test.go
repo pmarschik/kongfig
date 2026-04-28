@@ -469,3 +469,53 @@ func TestCodecPaths_EmptyForAllPrimitives(t *testing.T) {
 		t.Errorf("CodecPaths = %v, want empty for all-primitive struct", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// HelpTextPaths
+// ---------------------------------------------------------------------------
+
+func TestHelpTextPaths_BasicField(t *testing.T) {
+	type cfg struct {
+		Host string `kongfig:"host,help='the server hostname'"`
+		Port int    `kongfig:"port"`
+	}
+	got := schema.HelpTextPaths[cfg]()
+	if got["host"] != "the server hostname" {
+		t.Errorf("host help = %q, want 'the server hostname'", got["host"])
+	}
+	if _, ok := got["port"]; ok {
+		t.Error("port should not have a help entry")
+	}
+}
+
+func TestHelpTextPaths_MapField(t *testing.T) {
+	type cfg struct {
+		Labels map[string]string `kongfig:"labels,help='key=value metadata'"`
+	}
+	got := schema.HelpTextPaths[cfg]()
+	if got["labels"] != "key=value metadata" {
+		t.Errorf("labels help = %q, want 'key=value metadata'", got["labels"])
+	}
+}
+
+func TestHelpTextPaths_NilWhenNone(t *testing.T) {
+	type cfg struct {
+		Host string `kongfig:"host"`
+	}
+	if got := schema.HelpTextPaths[cfg](); got != nil {
+		t.Errorf("HelpTextPaths = %v, want nil when no help= tags present", got)
+	}
+}
+
+func TestHelpTextPaths_NestedStruct(t *testing.T) {
+	type db struct {
+		Host string `kongfig:"host,help='database hostname'"`
+	}
+	type cfg struct {
+		DB db `kongfig:"db"`
+	}
+	got := schema.HelpTextPaths[cfg]()
+	if got["db.host"] != "database hostname" {
+		t.Errorf("db.host help = %q, want 'database hostname'", got["db.host"])
+	}
+}

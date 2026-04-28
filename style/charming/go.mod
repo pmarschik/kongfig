@@ -4,11 +4,9 @@ go 1.26.2
 
 require (
 	charm.land/lipgloss/v2 v2.0.2
-	github.com/pmarschik/kongfig v0.0.0-00010101000000-000000000000
+	github.com/pmarschik/kongfig v0.1.0
 	github.com/pmarschik/lipmark v0.3.0
 )
-
-replace github.com/pmarschik/kongfig => ../../
 
 require (
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect

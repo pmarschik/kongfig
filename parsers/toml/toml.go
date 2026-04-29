@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -182,31 +183,35 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 }
 
 // isTOMLArray reports whether v is a slice type for multiline-overflow detection.
+// Uses reflection to handle typed slices (e.g. []SomeStruct) beyond []any/[]string.
 func isTOMLArray(v any) bool {
-	switch v.(type) {
-	case []any, []string:
-		return true
+	if v == nil {
+		return false
 	}
-	return false
+	return reflect.TypeOf(v).Kind() == reflect.Slice
 }
 
-// toTOMLSlice normalizes []any and []string to []any for uniform element iteration.
+// toTOMLSlice converts any slice to []any for uniform element iteration.
 func toTOMLSlice(v any) []any {
-	switch val := v.(type) {
-	case []any:
-		return val
-	case []string:
-		out := make([]any, len(val))
-		for i, s := range val {
-			out[i] = s
-		}
-		return out
+	if v == nil {
+		return nil
 	}
-	return nil
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		return nil
+	}
+	out := make([]any, rv.Len())
+	for i := range rv.Len() {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out
 }
 
 // tomlValue formats a value for TOML output.
 func tomlValue(v any) string {
+	if v == nil {
+		return "nil"
+	}
 	switch val := v.(type) {
 	case string:
 		return fmt.Sprintf("%q", val)
@@ -230,6 +235,20 @@ func tomlValue(v any) string {
 	case map[string]any:
 		return tomlInlineTable(val)
 	default:
+		rv := reflect.ValueOf(val)
+		switch rv.Kind() { //nolint:exhaustive // only slice/map/struct need special treatment
+		case reflect.Slice:
+			return tomlArray(toTOMLSlice(val))
+		case reflect.Map, reflect.Struct:
+			// Marshal to TOML and back to extract as map[string]any.
+			var buf bytes.Buffer
+			if err := toml.NewEncoder(&buf).Encode(val); err == nil {
+				var m map[string]any
+				if _, err = toml.Decode(buf.String(), &m); err == nil {
+					return tomlInlineTable(m)
+				}
+			}
+		}
 		return fmt.Sprintf("%q", strings.TrimSpace(fmt.Sprintf("%v", val)))
 	}
 }

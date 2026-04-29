@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -180,14 +181,15 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 	return nil
 }
 
-// isYAMLCollection reports whether v is a slice or map type that deserves
+// isYAMLCollection reports whether v is a slice or map that deserves
 // YAML-native syntax rather than Go's default %v formatting.
+// Uses reflection to handle typed slices (e.g. []SomeStruct) and maps.
 func isYAMLCollection(v any) bool {
-	switch v.(type) {
-	case []any, []string:
-		return true
+	if v == nil {
+		return false
 	}
-	return false
+	k := reflect.TypeOf(v).Kind()
+	return k == reflect.Slice || k == reflect.Map
 }
 
 // yamlFlowValue renders v as a YAML flow (inline) representation.

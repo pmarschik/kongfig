@@ -353,7 +353,10 @@ func HelpTextPaths[T any]() map[string]string {
 //   - Entries with an explicit numeric priority come first, ascending (0 = highest).
 //   - Entries with no priority follow, in struct discovery order.
 //
-// Only string fields are considered; non-string fields are silently skipped.
+// Both string and []string fields are collected. []string fields hold multiple
+// config file paths; combine with a sep= annotation so env vars like
+// "file1.yaml:file2.yaml" are split before [LoadConfigPaths] reads them.
+// Other field types are silently skipped.
 func ConfigPaths[T any]() []ConfigPathEntry {
 	var out []ConfigPathEntry
 	walkStructFields(reflect.TypeFor[T](), "", func(field reflect.StructField, path string, subTyp reflect.Type) {
@@ -361,7 +364,7 @@ func ConfigPaths[T any]() []ConfigPathEntry {
 		if !ft.IsConfigPath {
 			return
 		}
-		if subTyp.Kind() != reflect.String {
+		if !isStringOrStringSlice(subTyp) {
 			return
 		}
 		entry := ConfigPathEntry{Key: path}
@@ -432,6 +435,17 @@ func isPrimitiveKind(k reflect.Kind) bool {
 	default:
 		return false
 	}
+}
+
+// isStringOrStringSlice reports whether t is string, []string, or [N]string.
+func isStringOrStringSlice(t reflect.Type) bool {
+	if t.Kind() == reflect.String {
+		return true
+	}
+	if t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+		return t.Elem().Kind() == reflect.String
+	}
+	return false
 }
 
 // walkStructFields walks the exported, non-skipped fields of typ (following embedded

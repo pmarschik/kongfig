@@ -12,6 +12,7 @@ import (
 
 	kongfig "github.com/pmarschik/kongfig"
 	fileprovider "github.com/pmarschik/kongfig/providers/file"
+	"github.com/pmarschik/kongfig/schema"
 )
 
 // recordingStyler records SourceData calls for assertion.
@@ -425,6 +426,83 @@ func TestDiscoverMultipleParsers_SecondParserIgnoredWhenFirstFinds(t *testing.T)
 	if info := p.ProviderInfo(); info.Name != "test.first" {
 		t.Errorf("source: got %q, want test.first", info.Name)
 	}
+}
+
+func TestLoadConfigPaths_StringSlice(t *testing.T) {
+	dir := t.TempDir()
+	p := namedParser{format: "kv", ext: ".kv"}
+
+	// Two config files, each setting a different key.
+	file1 := filepath.Join(dir, "a.kv")
+	file2 := filepath.Join(dir, "b.kv")
+	if err := os.WriteFile(file1, []byte("host: alpha\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file2, []byte("port: 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	kf := kongfig.New(kongfig.WithParsers(p))
+
+	// Seed the config-files key as a []string (simulates what sep= splitting produces).
+	kf.MustLoad(context.Background(), &staticKVProvider{
+		data:   map[string]any{"config-files": []string{file1, file2}},
+		source: "defaults",
+	})
+
+	entries := []schema.ConfigPathEntry{{Key: "config-files"}}
+	if err := fileprovider.LoadConfigPaths(context.Background(), kf, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	flat := kf.Flat()
+	if flat["host"] != "alpha" {
+		t.Errorf("host: got %v, want alpha", flat["host"])
+	}
+	if flat["port"] != "8080" {
+		t.Errorf("port: got %v, want 8080", flat["port"])
+	}
+}
+
+func TestLoadConfigPaths_AnySlice(t *testing.T) {
+	dir := t.TempDir()
+	p := namedParser{format: "kv", ext: ".kv"}
+	file1 := filepath.Join(dir, "a.kv")
+	if err := os.WriteFile(file1, []byte("host: beta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	kf := kongfig.New(kongfig.WithParsers(p))
+
+	// []any simulates values loaded from YAML/JSON (where arrays are []any).
+	kf.MustLoad(context.Background(), &staticKVProvider{
+		data:   map[string]any{"config-files": []any{file1, ""}},
+		source: "defaults",
+	})
+
+	entries := []schema.ConfigPathEntry{{Key: "config-files"}}
+	if err := fileprovider.LoadConfigPaths(context.Background(), kf, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	flat := kf.Flat()
+	if flat["host"] != "beta" {
+		t.Errorf("host: got %v, want beta", flat["host"])
+	}
+}
+
+// staticKVProvider loads a pre-built map as a single layer.
+type staticKVProvider struct {
+	data   map[string]any
+	source string
+}
+
+func (p *staticKVProvider) Load(_ context.Context) (kongfig.ConfigData, error) {
+	return p.data, nil
+}
+
+func (p *staticKVProvider) ProviderInfo() kongfig.ProviderInfo {
+	return kongfig.ProviderInfo{Name: p.source}
 }
 
 // failingDiscoverer always returns an error from Discover.

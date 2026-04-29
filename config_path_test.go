@@ -47,14 +47,24 @@ func TestConfigPaths_NoPriority_DiscoveryOrder(t *testing.T) {
 	}
 }
 
-func TestConfigPaths_NonStringIgnored(t *testing.T) {
+func TestConfigPaths_SliceField(t *testing.T) {
+	type cfg struct {
+		Paths []string `kongfig:"paths,config-path"`
+	}
+	got := schema.ConfigPaths[cfg]()
+	if len(got) != 1 || got[0].Key != "paths" {
+		t.Errorf("[]string field should be collected; got %+v", got)
+	}
+}
+
+func TestConfigPaths_NonStringNonSliceIgnored(t *testing.T) {
 	type cfg struct {
 		Path   string `kongfig:"path,config-path=0"`
 		NotStr int    `kongfig:"notstr,config-path=0"`
 	}
 	got := schema.ConfigPaths[cfg]()
 	if len(got) != 1 || got[0].Key != "path" {
-		t.Errorf("non-string field should be skipped; got %+v", got)
+		t.Errorf("non-string/non-slice field should be skipped; got %+v", got)
 	}
 }
 

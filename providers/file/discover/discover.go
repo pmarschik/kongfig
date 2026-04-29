@@ -257,15 +257,56 @@ func (d *jujutsuRootDiscoverer) DisplayPath(_ context.Context, foundPath string)
 // explicitDiscoverer wraps a user-provided path.
 type explicitDiscoverer struct{ path string }
 
-// Explicit returns a Discoverer for a known file path. It does not search;
-// it reports whether the file exists. Source label is "file.explicit.<format>".
+// Explicit returns a Discoverer for a known file path with extension matching.
+// When parsers provide extensions via [ParserNamer], the file's extension must
+// match one of them; otherwise Discover returns empty (no error). Use [ExplicitBase]
+// when you know the location but want extension inference. Source label is "explicit.<format>".
 func Explicit(path string) *explicitDiscoverer { return &explicitDiscoverer{path: path} } //nolint:revive // returning concrete type allows callers to chain methods
 
 func (*explicitDiscoverer) Name() string { return "explicit" }
 
-func (d *explicitDiscoverer) Discover(_ context.Context, _ []string) (string, error) {
+func (d *explicitDiscoverer) Discover(_ context.Context, exts []string) (string, error) {
+	if len(exts) > 0 {
+		fileExt := filepath.Ext(d.path)
+		matched := false
+		for _, ext := range exts {
+			if fileExt == ext {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return "", nil
+		}
+	}
 	if info, err := os.Stat(d.path); err == nil && !info.IsDir() {
 		return d.path, nil
+	}
+	return "", nil
+}
+
+// explicitBaseDiscoverer searches for a config file at a known base path plus extension.
+type explicitBaseDiscoverer struct{ base string }
+
+// ExplicitBase returns a Discoverer that probes <base>.<ext> for each extension
+// the parser reports. Use this when the file location is known but the format
+// should be inferred from the parsers passed to [file.Discover].
+// Source label is "explicit.<format>".
+//
+// Example: ExplicitBase("/etc/myapp/config") tries /etc/myapp/config.yaml,
+// /etc/myapp/config.toml, etc. depending on which parsers are passed.
+func ExplicitBase(base string) *explicitBaseDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+	return &explicitBaseDiscoverer{base: base}
+}
+
+func (*explicitBaseDiscoverer) Name() string { return "explicit" }
+
+func (d *explicitBaseDiscoverer) Discover(_ context.Context, exts []string) (string, error) {
+	if len(exts) == 0 {
+		return "", nil
+	}
+	if p := findFile(filepath.Dir(d.base), filepath.Base(d.base), exts); p != "" {
+		return p, nil
 	}
 	return "", nil
 }

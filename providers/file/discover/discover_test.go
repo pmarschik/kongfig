@@ -105,6 +105,85 @@ func TestExplicit_ExistingFile(t *testing.T) {
 	}
 }
 
+func TestExplicit_ExtensionMatch_ReturnsPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+	if err := os.WriteFile(path, []byte("[section]\nkey = \"val\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := discover.Explicit(path).Discover(context.Background(), []string{".toml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != path {
+		t.Errorf("expected %q, got %q", path, got)
+	}
+}
+
+func TestExplicit_ExtensionMismatch_ReturnsEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+	if err := os.WriteFile(path, []byte("[section]\nkey = \"val\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// YAML parser's extensions — should not match a .toml file.
+	got, err := discover.Explicit(path).Discover(context.Background(), []string{".yaml", ".yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("expected empty (extension mismatch), got %q", got)
+	}
+}
+
+func TestExplicitBase_FindsMatchingExtension(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+	if err := os.WriteFile(path, []byte("[section]\nkey = \"val\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := discover.ExplicitBase(filepath.Join(tmp, "config")).Discover(context.Background(), []string{".toml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != path {
+		t.Errorf("expected %q, got %q", path, got)
+	}
+}
+
+func TestExplicitBase_SkipsNonMatchingExtension(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "config.toml"), []byte("[section]\nkey = \"val\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := discover.ExplicitBase(filepath.Join(tmp, "config")).Discover(context.Background(), []string{".yaml", ".yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("expected empty (no yaml file present), got %q", got)
+	}
+}
+
+func TestExplicitBase_NoExts_ReturnsEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "config.toml"), []byte("[section]\nkey = \"val\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := discover.ExplicitBase(filepath.Join(tmp, "config")).Discover(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("expected empty when no exts provided, got %q", got)
+	}
+}
+
 func TestExplicit_NonExistentFile_ReturnsEmpty(t *testing.T) {
 	path := "/nonexistent/path/config.yaml"
 

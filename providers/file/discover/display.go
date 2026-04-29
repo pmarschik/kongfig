@@ -20,8 +20,10 @@ func WithLongDisplayPaths(ctx context.Context) context.Context {
 	return context.WithValue(ctx, displayPathKey{}, true)
 }
 
-// displayPathIsLong reports whether long display paths are enabled in ctx.
-func displayPathIsLong(ctx context.Context) bool {
+// DisplayPathIsLong reports whether long display paths are enabled in ctx.
+// Sub-packages (e.g. [github.com/pmarschik/kongfig/providers/file/discover/vcs]) that
+// import this package use this function to honor the same context key.
+func DisplayPathIsLong(ctx context.Context) bool {
 	v, ok := ctx.Value(displayPathKey{}).(bool)
 	return ok && v
 }

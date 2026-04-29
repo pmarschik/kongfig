@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/pmarschik/kongfig/providers/file/discover"
 )
 
 // gitRootDiscoverer finds the config file at the git repository root using go-git.
@@ -62,10 +63,14 @@ func (d *gitRootDiscoverer) Discover(_ context.Context, exts []string) (string, 
 }
 
 // DisplayPath returns the found path relative to the git repository root.
-func (d *gitRootDiscoverer) DisplayPath(_ context.Context, foundPath string) string {
+// Short mode (default): returns "$git-root". Long mode ([discover.WithLongDisplayPaths]): returns the relative path.
+func (d *gitRootDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
 	root, err := d.root()
 	if err != nil || root == "" {
 		return ""
+	}
+	if !discover.DisplayPathIsLong(ctx) {
+		return "$git-root"
 	}
 	return relDisplay(root, "(git root)", foundPath)
 }

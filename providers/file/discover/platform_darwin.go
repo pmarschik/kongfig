@@ -45,7 +45,7 @@ func platformSystemDirs(app string) []string {
 // Long mode ([WithLongDisplayPaths]): full path — $XDG_CONFIG_HOME/<path>, ~/.config/<path>,
 // ~/Library/Application Support/<path>.
 func platformUserDisplayPath(ctx context.Context, _, foundPath string) string {
-	long := displayPathIsLong(ctx)
+	long := DisplayPathIsLong(ctx)
 
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		if symPathContains(xdg, foundPath) {
@@ -82,7 +82,7 @@ func platformUserDisplayPath(ctx context.Context, _, foundPath string) string {
 // Short mode: /Library/Application Support abbreviated to /Library/AS; /usr/local/etc and
 // /opt/homebrew/etc abbreviated to /brew/etc.
 func platformSystemDisplayPath(ctx context.Context, _, foundPath string) string {
-	if displayPathIsLong(ctx) {
+	if DisplayPathIsLong(ctx) {
 		return foundPath
 	}
 	if after, ok := strings.CutPrefix(foundPath, "/Library/Application Support/"); ok {

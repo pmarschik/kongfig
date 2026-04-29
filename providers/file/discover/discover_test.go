@@ -208,3 +208,137 @@ func TestExplicit_Directory_ReturnsEmpty(t *testing.T) {
 		t.Errorf("expected empty for directory path, got %q", got)
 	}
 }
+
+func TestXDG_DisplayPath_Short(t *testing.T) {
+	tmp := t.TempDir()
+	xdgDir := filepath.Join(tmp, "xdg")
+	if err := os.MkdirAll(xdgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(xdgDir, "app", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", xdgDir)
+	if got := discover.XDG().DisplayPath(context.Background(), path); got != "$xdg" {
+		t.Errorf("want $xdg, got %q", got)
+	}
+}
+
+func TestXDG_DisplayPath_Long(t *testing.T) {
+	tmp := t.TempDir()
+	xdgDir := filepath.Join(tmp, "xdg")
+	path := filepath.Join(xdgDir, "app", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", xdgDir)
+	ctx := discover.WithLongDisplayPaths(context.Background())
+	want := "$XDG_CONFIG_HOME/app/config.yaml"
+	if got := discover.XDG().DisplayPath(ctx, path); got != want {
+		t.Errorf("want %q, got %q", want, got)
+	}
+}
+
+func TestWorkdir_DisplayPath_Short(t *testing.T) {
+	tmp := t.TempDir()
+	// EvalSymlinks so that os.Getwd() and the path agree after chdir.
+	resolved, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(resolved, "config.yaml")
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(resolved)
+	if got := discover.Workdir().DisplayPath(context.Background(), path); got != "$workdir" {
+		t.Errorf("want $workdir, got %q", got)
+	}
+}
+
+func TestWorkdir_DisplayPath_Long(t *testing.T) {
+	tmp := t.TempDir()
+	// EvalSymlinks so that os.Getwd() and the path agree after chdir.
+	resolved, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(resolved, "config.yaml")
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(resolved)
+	ctx := discover.WithLongDisplayPaths(context.Background())
+	if got := discover.Workdir().DisplayPath(ctx, path); got != "./config.yaml" {
+		t.Errorf("want ./config.yaml, got %q", got)
+	}
+}
+
+func TestGitRoot_DisplayPath_Short(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := discover.GitRoot(5).FromDir(tmp)
+	if got := d.DisplayPath(context.Background(), path); got != "$git-root" {
+		t.Errorf("want $git-root, got %q", got)
+	}
+}
+
+func TestGitRoot_DisplayPath_Long(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := discover.GitRoot(5).FromDir(tmp)
+	ctx := discover.WithLongDisplayPaths(context.Background())
+	if got := d.DisplayPath(ctx, path); got != "(git root)/config.yaml" {
+		t.Errorf("want (git root)/config.yaml, got %q", got)
+	}
+}
+
+func TestJujutsuRoot_DisplayPath_Short(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, ".jj"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := discover.JujutsuRoot(5).FromDir(tmp)
+	if got := d.DisplayPath(context.Background(), path); got != "$jj-root" {
+		t.Errorf("want $jj-root, got %q", got)
+	}
+}
+
+func TestJujutsuRoot_DisplayPath_Long(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, ".jj"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(path, []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := discover.JujutsuRoot(5).FromDir(tmp)
+	ctx := discover.WithLongDisplayPaths(context.Background())
+	if got := d.DisplayPath(ctx, path); got != "(jj root)/config.yaml" {
+		t.Errorf("want (jj root)/config.yaml, got %q", got)
+	}
+}

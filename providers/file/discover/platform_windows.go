@@ -41,7 +41,7 @@ func platformUserDisplayPath(ctx context.Context, _ string, foundPath string) st
 	if !symPathContains(appData, foundPath) {
 		return ""
 	}
-	if displayPathIsLong(ctx) {
+	if DisplayPathIsLong(ctx) {
 		if p := symPath(appData, `%APPDATA%`, foundPath); p != "" {
 			return p
 		}
@@ -60,7 +60,7 @@ func platformSystemDisplayPath(ctx context.Context, _, foundPath string) string 
 	if !symPathContains(programData, foundPath) {
 		return foundPath
 	}
-	if displayPathIsLong(ctx) {
+	if DisplayPathIsLong(ctx) {
 		if p := symPath(programData, `%ProgramData%`, foundPath); p != "" {
 			return p
 		}

@@ -78,18 +78,26 @@ func (*xdgDiscoverer) Discover(ctx context.Context, exts []string) (string, erro
 }
 
 // DisplayPath formats the found path for human-friendly display.
-// Returns "" if no symbolic prefix can be applied.
-// Replaces $XDG_CONFIG_HOME or ~/.config prefix with the symbolic form.
-func (*xdgDiscoverer) DisplayPath(_ context.Context, foundPath string) string {
+// Short mode (default): returns a concise token ($xdg or ~/.config).
+// Long mode ([WithLongDisplayPaths]): returns the full path.
+// Returns "" if the path is not under any known XDG directory.
+func (*xdgDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
+	long := DisplayPathIsLong(ctx)
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		if rel, err := filepath.Rel(xdg, foundPath); err == nil && !strings.HasPrefix(rel, "..") {
-			return "$XDG_CONFIG_HOME/" + rel
+		if symPathContains(xdg, foundPath) {
+			if long {
+				return symPath(xdg, "$XDG_CONFIG_HOME", foundPath)
+			}
+			return "$xdg"
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		configDir := filepath.Join(home, ".config")
-		if rel, err := filepath.Rel(configDir, foundPath); err == nil && !strings.HasPrefix(rel, "..") {
-			return "~/.config/" + rel
+		if symPathContains(configDir, foundPath) {
+			if long {
+				return symPath(configDir, "~/.config", foundPath)
+			}
+			return "~/.config"
 		}
 	}
 	return ""
@@ -115,14 +123,21 @@ func (*workdirDiscoverer) Discover(_ context.Context, exts []string) (string, er
 }
 
 // DisplayPath formats the found path relative to the working directory.
+// Short mode (default): returns "$workdir". Long mode ([WithLongDisplayPaths]): returns the relative path.
 // Returns "" if the relative path cannot be determined.
-func (*workdirDiscoverer) DisplayPath(_ context.Context, foundPath string) string {
-	if wd, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(wd, foundPath); err == nil && !strings.HasPrefix(rel, "..") {
-			return "./" + rel
-		}
+func (*workdirDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
 	}
-	return ""
+	rel, err := filepath.Rel(wd, foundPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	if !DisplayPathIsLong(ctx) {
+		return "$workdir"
+	}
+	return "./" + rel
 }
 
 // gitRootDiscoverer searches the git repository root by walking up the filesystem.
@@ -175,7 +190,8 @@ func (d *gitRootDiscoverer) Discover(_ context.Context, exts []string) (string, 
 }
 
 // DisplayPath formats the found path relative to the git repository root.
-func (d *gitRootDiscoverer) DisplayPath(_ context.Context, foundPath string) string {
+// Short mode (default): returns "$git-root". Long mode ([WithLongDisplayPaths]): returns the relative path.
+func (d *gitRootDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
 	wd, err := d.wd()
 	if err != nil {
 		return ""
@@ -184,10 +200,14 @@ func (d *gitRootDiscoverer) DisplayPath(_ context.Context, foundPath string) str
 	if root == "" {
 		return ""
 	}
-	if rel, err := filepath.Rel(root, foundPath); err == nil && !strings.HasPrefix(rel, "..") {
-		return "(git root)/" + rel
+	rel, err := filepath.Rel(root, foundPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
 	}
-	return ""
+	if !DisplayPathIsLong(ctx) {
+		return "$git-root"
+	}
+	return "(git root)/" + rel
 }
 
 // jujutsuRootDiscoverer searches the Jujutsu repository root by walking up the filesystem.
@@ -240,7 +260,8 @@ func (d *jujutsuRootDiscoverer) Discover(_ context.Context, exts []string) (stri
 }
 
 // DisplayPath formats the found path relative to the Jujutsu repository root.
-func (d *jujutsuRootDiscoverer) DisplayPath(_ context.Context, foundPath string) string {
+// Short mode (default): returns "$jj-root". Long mode ([WithLongDisplayPaths]): returns the relative path.
+func (d *jujutsuRootDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
 	wd, err := d.wd()
 	if err != nil {
 		return ""
@@ -249,10 +270,14 @@ func (d *jujutsuRootDiscoverer) DisplayPath(_ context.Context, foundPath string)
 	if root == "" {
 		return ""
 	}
-	if rel, err := filepath.Rel(root, foundPath); err == nil && !strings.HasPrefix(rel, "..") {
-		return "(jj root)/" + rel
+	rel, err := filepath.Rel(root, foundPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
 	}
-	return ""
+	if !DisplayPathIsLong(ctx) {
+		return "$jj-root"
+	}
+	return "(jj root)/" + rel
 }
 
 // explicitDiscoverer wraps a user-provided path.
@@ -347,15 +372,20 @@ func (d *execDirDiscoverer) Discover(ctx context.Context, exts []string) (string
 }
 
 // DisplayPath formats the found path relative to the executable directory.
-func (d *execDirDiscoverer) DisplayPath(_ context.Context, foundPath string) string {
+// Short mode (default): returns "$exec-dir". Long mode ([WithLongDisplayPaths]): returns the relative path.
+func (d *execDirDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
 	dir, err := d.dir()
 	if err != nil {
 		return ""
 	}
-	if rel, err := filepath.Rel(dir, foundPath); err == nil && !strings.HasPrefix(rel, "..") {
-		return "(exec dir)/" + rel
+	rel, err := filepath.Rel(dir, foundPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
 	}
-	return ""
+	if !DisplayPathIsLong(ctx) {
+		return "$exec-dir"
+	}
+	return "(exec dir)/" + rel
 }
 
 // findFile searches dir for <name><ext> for each ext; returns first found path.

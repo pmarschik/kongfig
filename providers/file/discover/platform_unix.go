@@ -33,7 +33,7 @@ func platformSystemDirs(app string) []string {
 // Short mode (default): $xdg or ~/.config (token only).
 // Long mode ([WithLongDisplayPaths]): $XDG_CONFIG_HOME/<path> or ~/.config/<path>.
 func platformUserDisplayPath(ctx context.Context, app, foundPath string) string {
-	long := displayPathIsLong(ctx)
+	long := DisplayPathIsLong(ctx)
 
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		if symPathContains(xdg, foundPath) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+
+	"github.com/pmarschik/kongfig/providers/file/discover"
 )
 
 // jjRootDiscoverer finds the config file at the Jujutsu workspace root by
@@ -47,10 +49,14 @@ func (d *jjRootDiscoverer) Discover(ctx context.Context, exts []string) (string,
 }
 
 // DisplayPath returns the found path relative to the Jujutsu workspace root.
+// Short mode (default): returns "$jj-root". Long mode ([discover.WithLongDisplayPaths]): returns the relative path.
 func (d *jjRootDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
 	root, err := d.root(ctx)
 	if err != nil || root == "" {
 		return ""
+	}
+	if !discover.DisplayPathIsLong(ctx) {
+		return "$jj-root"
 	}
 	return relDisplay(root, "(jj root)", foundPath)
 }

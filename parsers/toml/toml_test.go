@@ -312,6 +312,25 @@ func TestBindRender_AnySliceOfMaps(t *testing.T) {
 	}
 }
 
+func TestBindRender_BlockCollections(t *testing.T) {
+	// WithRenderBlockCollections forces multiline style regardless of terminal width.
+	items := []string{"alpha", "beta", "gamma"}
+	data := kongfig.ConfigData{"items": kongfig.RenderedValue{Value: items}}
+	ctx := kongfig.WithRenderBlockCollectionsCtx(context.Background())
+	var buf bytes.Buffer
+	r := tomlparser.Default.Bind(plainStyler{})
+	if err := r.Render(ctx, &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "items = [") && !strings.Contains(out, "\n") {
+		t.Errorf("expected multiline style, got inline:\n%s", out)
+	}
+	if !strings.Contains(out, "\"alpha\",") {
+		t.Errorf("expected multiline TOML array with '\"alpha\",' entry, got:\n%s", out)
+	}
+}
+
 // plainStyler is a local no-op Styler for tests.
 type plainStyler struct{}
 

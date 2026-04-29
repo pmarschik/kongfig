@@ -41,7 +41,13 @@ func filteredFieldNames(fn PathFieldNames, hideEnv, hideFlags bool) PathFieldNam
 // Renderers should call [RenderAnnotation] for source annotations and
 // [RenderValue] for leaf values; both handle the RenderedValue wrapper.
 func prepareRender(ctx context.Context, kf *Kongfig, opts ...RenderOption) (ConfigData, context.Context) {
-	ro := applyRenderOptions(opts)
+	// Inherit existing render options from ctx so callers like RenderLayers that
+	// call prepareRender on a fresh child Kongfig don't lose settings (TTY size,
+	// redacted paths, field names, …) that were established by the parent call.
+	ro := renderOptsFromCtx(ctx)
+	for _, o := range opts {
+		o(&ro)
+	}
 	kf.mu.RLock()
 	cfg := kf.render
 	kf.mu.RUnlock()

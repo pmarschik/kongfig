@@ -76,18 +76,19 @@ type pathMetaContainerKey struct{}
 // exported; internal-only keys remain unexported.
 // These use the same [NewRenderOptionsKey] facility that library users use for their own keys.
 var (
-	RenderNoCommentsKey     = NewRenderOptionsKey[bool]()
-	renderShowRedactedKey   = NewRenderOptionsKey[bool]()
-	RenderFilterSourceKey   = NewRenderOptionsKey[[]string]()
-	RenderVerboseSourcesKey = NewRenderOptionsKey[map[string][]string]()
-	RenderHelpTextsKey      = NewRenderOptionsKey[map[string]string]()
-	RenderFileRawPathsKey   = NewRenderOptionsKey[bool]()
-	renderGroupEnvLayersKey = NewRenderOptionsKey[bool]()
-	renderFormatKey         = NewRenderOptionsKey[string]()
-	RenderNoAlignSourcesKey = NewRenderOptionsKey[bool]()
-	renderRedactedPathsKey  = NewRenderOptionsKey[map[string]bool]()
-	renderRedactFnKey       = NewRenderOptionsKey[func(string, string) string]()
-	RenderHelpTextsSeenKey  = NewRenderOptionsKey[*map[string]bool]()
+	RenderNoCommentsKey       = NewRenderOptionsKey[bool]()
+	renderShowRedactedKey     = NewRenderOptionsKey[bool]()
+	RenderFilterSourceKey     = NewRenderOptionsKey[[]string]()
+	RenderVerboseSourcesKey   = NewRenderOptionsKey[map[string][]string]()
+	RenderHelpTextsKey        = NewRenderOptionsKey[map[string]string]()
+	RenderFileRawPathsKey     = NewRenderOptionsKey[bool]()
+	renderGroupEnvLayersKey   = NewRenderOptionsKey[bool]()
+	renderFormatKey           = NewRenderOptionsKey[string]()
+	RenderNoAlignSourcesKey   = NewRenderOptionsKey[bool]()
+	renderRedactedPathsKey    = NewRenderOptionsKey[map[string]bool]()
+	renderRedactFnKey         = NewRenderOptionsKey[func(string, string) string]()
+	RenderHelpTextsSeenKey    = NewRenderOptionsKey[*map[string]bool]()
+	RenderBlockCollectionsKey = NewRenderOptionsKey[bool]()
 )
 
 // renderOptions is the options bag for render configuration.
@@ -148,6 +149,12 @@ func WithRenderFormat(format string) RenderOption { return renderFormatKey.Bind(
 // follows immediately after its value with no padding.
 func WithRenderNoAlignSources() RenderOption { return RenderNoAlignSourcesKey.Bind(true) }
 
+// WithRenderBlockCollections forces array and map values to always render in
+// block style, regardless of terminal width or value length.
+// By default renderers use inline/flow syntax for short collections and switch
+// to block only when the inline form would overflow the terminal.
+func WithRenderBlockCollections() RenderOption { return RenderBlockCollectionsKey.Bind(true) }
+
 // --- Context storage ---
 
 type renderOptionsKey struct{}
@@ -194,6 +201,13 @@ func WithRenderNoCommentsCtx(ctx context.Context) context.Context {
 // In production code, prefer [WithRenderNoAlignSources] passed to [Kongfig.RenderWith].
 func WithRenderNoAlignSourcesCtx(ctx context.Context) context.Context {
 	return RenderNoAlignSourcesKey.WithCtx(ctx, true)
+}
+
+// WithRenderBlockCollectionsCtx returns a context with block collection rendering enabled,
+// for use in tests or direct calls to renderer implementations outside [Kongfig.RenderWith].
+// In production code, prefer [WithRenderBlockCollections] passed to [Kongfig.RenderWith].
+func WithRenderBlockCollectionsCtx(ctx context.Context) context.Context {
+	return RenderBlockCollectionsKey.WithCtx(ctx, true)
 }
 
 // WithRenderHelpTextsCtx returns a context with the given help texts and a fresh
@@ -276,13 +290,4 @@ func envSourceLabel(path string, ro renderOptions) string {
 		return "env"
 	}
 	return "[" + strings.Join(envSrcs, ", ") + "]"
-}
-
-// applyRenderOptions applies opts to a zero renderOptions and returns the result.
-func applyRenderOptions(opts []RenderOption) renderOptions {
-	var ro renderOptions
-	for _, o := range opts {
-		o(&ro)
-	}
-	return ro
 }

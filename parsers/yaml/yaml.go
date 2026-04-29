@@ -87,6 +87,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 	pad := strings.Repeat("  ", indent)
 	tty, _ := render.TTYSizeKey.Read(ctx)
 	cols := tty.Cols
+	forceBlock := render.BlockCollections(ctx)
 
 	for _, k := range keys {
 		v := data[k]
@@ -133,7 +134,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 			case isYAMLCollection(rawVal):
 				inline := yamlFlowValue(rawVal)
 				keyW := render.VisualWidth(s.Key(k))
-				if cols > 0 && len(pad)+keyW+2+render.VisualWidth(inline) > cols {
+				if forceBlock || (cols > 0 && len(pad)+keyW+2+render.VisualWidth(inline) > cols) {
 					if b, err := goyaml.Marshal(rawVal); err == nil {
 						for bl := range strings.SplitSeq(strings.TrimRight(string(b), "\n"), "\n") {
 							blockLines = append(blockLines, bl)

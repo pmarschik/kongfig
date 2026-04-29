@@ -65,6 +65,7 @@ Renderers read options via accessors in the `render` sub-package.
 | `WithRenderGroupEnvLayers()`                            | In `RenderLayers`, merge all `env.*` layers into one before iteration.                                                                                                                                                   |
 | `WithRenderFormat(format string)`                       | Output format: `"yaml"`, `"toml"`, `"json"`, `"env"`, `"flags"`.                                                                                                                                                         |
 | `WithRenderNoAlignSources()`                            | Disable column-alignment of source annotation comments.                                                                                                                                                                  |
+| `WithRenderBlockCollections()`                          | Always render arrays and maps in block/multiline style. Default: inline when short, block when overflowing the terminal width.                                                                                           |
 | `render.WithTTYSize(cols, rows int)`                    | Set terminal dimensions. `AlignAnnotationsCtx` uses this to fall back to above-line annotations when the terminal is too narrow for inline layout.                                                                       |
 
 ### Context accessors (in `render` package)

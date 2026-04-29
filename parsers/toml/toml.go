@@ -105,6 +105,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 
 	tty, _ := render.TTYSizeKey.Read(ctx)
 	cols := tty.Cols
+	forceBlock := render.BlockCollections(ctx)
 
 	for _, k := range scalars {
 		v := data[k]
@@ -129,8 +130,8 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		inline := tomlValue(leafVal)
 		keyW := render.VisualWidth(s.Key(k))
 
-		// For TOML arrays, switch to multiline when the inline form would overflow.
-		if isTOMLArray(leafVal) && cols > 0 && keyW+3+render.VisualWidth(inline) > cols {
+		// For TOML arrays, switch to multiline when forced or inline form would overflow.
+		if isTOMLArray(leafVal) && (forceBlock || (cols > 0 && keyW+3+render.VisualWidth(inline) > cols)) {
 			if isRV {
 				if ann := render.Annotation(ctx, rv, path, s); ann != "" {
 					fmt.Fprintf(w, "%s\n", s.Comment("# ")+ann)

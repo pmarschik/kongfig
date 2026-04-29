@@ -135,9 +135,11 @@ Each parser's test file should cover:
 - Section headers use `s.Syntax("[header]")`.
 - Help comments use `# prefix`.
 - Slices of any element type render as `[...]` inline arrays. Use `reflect.TypeOf(v).Kind() == reflect.Slice` rather than a `[]any` type switch; typed slices like `[]SomeStruct` would otherwise fall through to Go's `%v` format.
+- Honour `render.BlockCollections(ctx)`: when true, always emit multiline style regardless of inline length.
 
 ### YAML (`parsers/yaml`)
 
 - Help comments use `# prefix`.
 - Supports nested maps via recursive `renderMap`.
 - Slices and maps render as YAML flow syntax (`[{k: v}, ...]`). Use `reflect.TypeOf(v).Kind()` to detect any slice/map — typed slices like `[]SomeStruct` would otherwise fall through to Go's `%v` format.
+- Honour `render.BlockCollections(ctx)`: when true, always emit block style regardless of inline length or TTY width.

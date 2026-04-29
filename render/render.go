@@ -325,6 +325,13 @@ func AlignSources(ctx context.Context) bool {
 	return !v
 }
 
+// BlockCollections reports whether renderers should always use block style for
+// collections (slices, maps) instead of inline/flow syntax.
+func BlockCollections(ctx context.Context) bool {
+	v, _ := kongfig.RenderBlockCollectionsKey.Read(ctx)
+	return v
+}
+
 // --- Filter helpers ---
 
 // BuildFilterSource constructs a FilterSource slice from a map of layer name → show bool.

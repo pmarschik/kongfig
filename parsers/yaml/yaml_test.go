@@ -309,6 +309,25 @@ func TestBindRender_AnySliceOfMaps(t *testing.T) {
 	}
 }
 
+func TestBindRender_BlockCollections(t *testing.T) {
+	// WithRenderBlockCollections forces block style regardless of terminal width.
+	items := []string{"alpha", "beta", "gamma"}
+	data := kongfig.ConfigData{"items": kongfig.RenderedValue{Value: items}}
+	ctx := kongfig.WithRenderBlockCollectionsCtx(context.Background())
+	var buf bytes.Buffer
+	r := yamlparser.Default.Bind(plainStyler{})
+	if err := r.Render(ctx, &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "items: [") {
+		t.Errorf("expected block style, got inline:\n%s", out)
+	}
+	if !strings.Contains(out, "- alpha") {
+		t.Errorf("expected YAML block list with '- alpha', got:\n%s", out)
+	}
+}
+
 func TestYAMLRenderer_AlignSources(t *testing.T) {
 	kf := kongfig.New()
 	if err := kf.Load(context.Background(), &staticProvider{

@@ -48,7 +48,7 @@ success "Sub-module tags pushed"
 
 # ── update GitHub release notes from CHANGELOG.md ────────────────────────────
 info "Updating GitHub release notes…"
-notes=$(awk '/^## \[/{if(p) exit; p=1} p' CHANGELOG.md)
+notes=$(awk '/^## \[/{if(p) exit; p=1; next} p' CHANGELOG.md | sed '/./,$!d')
 if gh release view "${version}" &>/dev/null; then
   gh release edit "${version}" --notes "${notes}"
 else

@@ -26,6 +26,14 @@ body = """
 {% endfor %}
 """
 
+footer = """
+{% for release in releases -%}
+    {% if release.version -%}
+[{{ release.version }}]: https://github.com/pmarschik/kongfig/releases/tag/{{ release.version }}
+    {% endif -%}
+{% endfor %}
+"""
+
 [git]
 commit_parsers = [
     { message = "^feat", group = "<!-- 0 -->🚀 Features" },

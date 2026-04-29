@@ -5,9 +5,9 @@ go 1.26.2
 require (
 	github.com/alecthomas/kong v1.15.0
 	github.com/pmarschik/kong-charming v0.2.0
-	github.com/pmarschik/kongfig v0.1.0
-	github.com/pmarschik/kongfig/kong v0.1.0
-	github.com/pmarschik/kongfig/style/charming v0.1.0
+	github.com/pmarschik/kongfig v0.2.0
+	github.com/pmarschik/kongfig/kong v0.2.0
+	github.com/pmarschik/kongfig/style/charming v0.2.0
 	github.com/pmarschik/lipmark v0.3.0
 )
 

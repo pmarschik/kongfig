@@ -4,8 +4,8 @@ go 1.26.2
 
 require (
 	github.com/alecthomas/kong v1.15.0
-	github.com/pmarschik/kongfig v0.1.0
-	github.com/pmarschik/kongfig/providers/file v0.1.0
+	github.com/pmarschik/kongfig v0.2.0
+	github.com/pmarschik/kongfig/providers/file v0.2.0
 )
 
 require (

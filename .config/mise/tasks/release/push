@@ -17,6 +17,13 @@ version=$(git tag --sort=-version:refname | grep '^v[0-9]' | head -1)
 info "Version: ${bold}${version}${reset}"
 echo ""
 
+# ── advance main bookmark to the tagged commit ────────────────────────────────
+if [[ "${VCS}" == "jj" ]]; then
+  info "Advancing main bookmark to ${version}…"
+  jj bookmark set main -r "${version}"
+  success "main → ${version}"
+fi
+
 # ── push branch ───────────────────────────────────────────────────────────────
 if [[ "${VCS}" == "jj" ]]; then
   info "Pushing bookmark (requires hardware key)…"

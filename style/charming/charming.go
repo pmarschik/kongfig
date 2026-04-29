@@ -122,10 +122,10 @@ func newStylerStyles(t theme.Set) stylerStyles {
 		Redacted:      styleOr(t, ConfigRedacted, theme.Error),
 		AnnotationKey: styleOr(t, ConfigAnnotationKey, theme.Muted),
 		CodecValue:    codecStyle,
-		Flags:         styleOr(t, LayerFlags, theme.Success),
-		Env:           styleOr(t, LayerEnv, theme.Info),
-		File:          styleOr(t, LayerFile, theme.Info),
-		Defaults:      styleOr(t, LayerDefaults, theme.Dim),
+		Flags:         styleOrFaint(t, LayerFlags, theme.Success),
+		Env:           styleOrFaint(t, LayerEnv, theme.Info),
+		File:          styleOrFaint(t, LayerFile, theme.Info),
+		Defaults:      styleOr(t, LayerDefaults, theme.Muted),
 	}
 }
 
@@ -160,6 +160,15 @@ func styleOr(t theme.Set, name, fallback string) lipgloss.Style {
 		return t.Get(name)
 	}
 	return t.Get(fallback)
+}
+
+// styleOrFaint is like styleOr but applies Faint(true) to the fallback style,
+// producing a muted-but-colored default for provenance annotations.
+func styleOrFaint(t theme.Set, name, fallback string) lipgloss.Style {
+	if slices.Contains(t.Names(), name) {
+		return t.Get(name)
+	}
+	return t.Get(fallback).Faint(true)
 }
 
 // Styler implements [kongfig.Styler] using pre-resolved lipgloss styles.

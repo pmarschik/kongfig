@@ -118,7 +118,7 @@ func (m LayerMeta) RenderAnnotation(ctx context.Context, s Styler, path string) 
 			panic(fmt.Sprintf("kongfig: ProviderData.RenderAnnotation must return a single line; %T returned %q", m.Data, data))
 		}
 		if data != "" {
-			return s.SourceKind(kind) + " (" + data + ")"
+			return s.SourceKind(kind) + s.Syntax(" (") + data + s.Syntax(")")
 		}
 	}
 	return s.SourceKind(kind)

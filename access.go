@@ -24,9 +24,9 @@ func (k *Kongfig) Layers() []Layer {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
 	out := make([]Layer, len(k.layers))
-	for i, l := range k.layers {
-		out[i] = l
-		out[i].Data = l.Data.Clone()
+	for i := range k.layers {
+		out[i] = k.layers[i]
+		out[i].Data = k.layers[i].Data.Clone()
 	}
 	return out
 }

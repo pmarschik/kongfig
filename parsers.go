@@ -21,3 +21,19 @@ type ParserNamer interface {
 type OutputProvider interface {
 	Bind(s Styler) Renderer
 }
+
+// KeyOrderParser is an optional interface a [Parser] can implement to report
+// the key insertion order from a parsed document alongside the data.
+// [providers/file.Provider] checks for this interface during [Provider.Load] and
+// stores the result in [Layer.KeyOrder] for use by [Kongfig.RenderLayers].
+type KeyOrderParser interface {
+	UnmarshalWithKeyOrder([]byte) (data ConfigData, keyOrder map[string][]string, err error)
+}
+
+// KeyOrderProvider is an optional interface a [Provider] can implement to report
+// the key insertion order captured during its most recent [Provider.Load] call.
+// [Kongfig.Load] checks for this interface after loading and stores the result in
+// [Layer.KeyOrder] so renderers can preserve file source order in --layers mode.
+type KeyOrderProvider interface {
+	KeyOrder() map[string][]string
+}

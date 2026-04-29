@@ -12,11 +12,15 @@ import (
 )
 
 // Provider loads a config file using a Parser.
+//
+//nolint:govet // fieldalignment: lastKeyOrder adds an 8-byte map to a 64-byte struct; layout is intentional
 type Provider struct {
 	parser      kongfig.Parser
 	path        string
 	source      string // optional override set by Discover; falls back to path
 	displayPath string // optional human-readable path set by Discover (e.g. "$XDG_CONFIG_HOME/...")
+	// lastKeyOrder caches the key insertion order from the most recent Load call.
+	lastKeyOrder map[string][]string
 }
 
 // New returns a Provider (and ByteProvider) that loads the file at path using parser.
@@ -88,14 +92,28 @@ func (p *Provider) Load(ctx context.Context) (kongfig.ConfigData, error) {
 		return nil, err
 	}
 	if len(b) == 0 {
+		p.lastKeyOrder = nil
 		return kongfig.ConfigData{}, nil
 	}
+	if kop, ok := p.parser.(kongfig.KeyOrderParser); ok {
+		data, order, parseErr := kop.UnmarshalWithKeyOrder(b)
+		if parseErr != nil {
+			return nil, fmt.Errorf("file provider: parse %s: %w", p.path, parseErr)
+		}
+		p.lastKeyOrder = order
+		return data, nil
+	}
+	p.lastKeyOrder = nil
 	data, err := p.parser.Unmarshal(b)
 	if err != nil {
 		return nil, fmt.Errorf("file provider: parse %s: %w", p.path, err)
 	}
 	return data, nil
 }
+
+// KeyOrder returns the key insertion order captured during the most recent Load call.
+// Implements [kongfig.KeyOrderProvider].
+func (p *Provider) KeyOrder() map[string][]string { return p.lastKeyOrder }
 
 // Bind returns a Renderer if the parser implements OutputProvider; otherwise nil.
 func (p *Provider) Bind(s kongfig.Styler) kongfig.Renderer {

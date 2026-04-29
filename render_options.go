@@ -10,10 +10,9 @@ import (
 // stays free of render concerns beyond accepting and forwarding these settings.
 // [Kongfig.RenderWith] applies it automatically.
 type renderConfig struct {
-	RedactedPaths map[string]bool
-	RedactFn      func(path, value string) string
-	// DefaultFormat is the format used by [Render] when [WithRenderFormat] is not set
-	// and multiple renderable parsers are registered. Set via [WithDefaultFormat].
+	RedactedPaths   map[string]bool
+	RedactFn        func(path, value string) string
+	FieldOrder      map[string][]string
 	DefaultFormat   string
 	HideEnvVarNames bool
 	HideFlagNames   bool
@@ -89,6 +88,10 @@ var (
 	renderRedactFnKey         = NewRenderOptionsKey[func(string, string) string]()
 	RenderHelpTextsSeenKey    = NewRenderOptionsKey[*map[string]bool]()
 	RenderBlockCollectionsKey = NewRenderOptionsKey[bool]()
+	// RenderKeyOrderKey holds a parent-path → ordered-child-names map.
+	// Renderers use it to emit keys in struct field order rather than alphabetically.
+	// Set via [WithRenderKeyOrder]; auto-injected by [NewFor] and [Kongfig.RenderLayers].
+	RenderKeyOrderKey = NewRenderOptionsKey[map[string][]string]()
 )
 
 // renderOptions is the options bag for render configuration.
@@ -154,6 +157,20 @@ func WithRenderNoAlignSources() RenderOption { return RenderNoAlignSourcesKey.Bi
 // By default renderers use inline/flow syntax for short collections and switch
 // to block only when the inline form would overflow the terminal.
 func WithRenderBlockCollections() RenderOption { return RenderBlockCollectionsKey.Bind(true) }
+
+// WithRenderKeyOrder sets the parent-path → ordered-child-names map used by renderers
+// to emit keys in the specified order rather than alphabetically.
+// Pass the output of [schema.FieldOrderPaths] to preserve struct field declaration order.
+// [NewFor] and [Kongfig.RenderLayers] inject this automatically.
+func WithRenderKeyOrder(orders map[string][]string) RenderOption {
+	return RenderKeyOrderKey.Bind(orders)
+}
+
+// withFieldOrder stores the struct-derived field order on the Kongfig instance
+// so prepareRender can inject it as a render-context default.
+func withFieldOrder(orders map[string][]string) Option {
+	return func(k *Kongfig) { k.render.FieldOrder = orders }
+}
 
 // --- Context storage ---
 

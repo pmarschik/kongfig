@@ -126,14 +126,21 @@ func (k *Kongfig) RenderLayers(ctx context.Context, fn func(ctx context.Context,
 	}
 
 	filterSource, _ := readOpts[[]string](ro, RenderFilterSourceKey)
-	for _, layer := range layers {
+	for i := range layers {
+		layer := &layers[i]
 		if len(filterSource) > 0 && !matchesFilterLayer(layer.Meta.Kind, layer.Meta.Name, filterSource) {
 			continue
 		}
 		layerKf := New()
 		_ = layerKf.LoadParsed(layer.Data, layer.Meta.Name) //nolint:errcheck // in-memory data, never errors
 		layerData, layerCtx := prepareRender(enrichedCtx, layerKf, WithRenderFilterSource(nil))
-		if err := fn(layerCtx, layer, layerData); err != nil {
+		// For per-layer rendering, file key order overrides struct field order.
+		if len(layer.KeyOrder) > 0 {
+			layerRo := renderOptsFromCtx(layerCtx)
+			layerRo.bind(RenderKeyOrderKey, layer.KeyOrder)
+			layerCtx = withRenderOptsCtx(layerCtx, layerRo)
+		}
+		if err := fn(layerCtx, *layer, layerData); err != nil {
 			return err
 		}
 	}
@@ -147,22 +154,22 @@ func mergeEnvLayers(layers []Layer) []Layer {
 	merged := make(ConfigData)
 	firstEnvIdx := -1
 	var firstMeta LayerMeta
-	for i, l := range layers {
-		if l.Meta.Kind != KindEnv {
+	for i := range layers {
+		if layers[i].Meta.Kind != KindEnv {
 			continue
 		}
 		if firstEnvIdx == -1 {
 			firstEnvIdx = i
-			firstMeta = l.Meta
+			firstMeta = layers[i].Meta
 		}
-		maps.Copy(merged, l.Data)
+		maps.Copy(merged, layers[i].Data)
 	}
 	if firstEnvIdx == -1 {
 		return layers
 	}
 	out := make([]Layer, 0, len(layers))
-	for i, l := range layers {
-		if l.Meta.Kind == KindEnv {
+	for i := range layers {
+		if layers[i].Meta.Kind == KindEnv {
 			if i == firstEnvIdx {
 				out = append(out, Layer{Data: merged, Meta: LayerMeta{
 					ID:        firstMeta.ID,
@@ -174,7 +181,7 @@ func mergeEnvLayers(layers []Layer) []Layer {
 			}
 			continue
 		}
-		out = append(out, l)
+		out = append(out, layers[i])
 	}
 	return out
 }

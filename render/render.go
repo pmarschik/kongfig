@@ -332,6 +332,44 @@ func BlockCollections(ctx context.Context) bool {
 	return v
 }
 
+// KeyOrder returns the ordered child key names for the given parent dot-path from ctx.
+// Returns nil when no order is set or the path is not found in the order map.
+// Renderers use this to emit keys in struct field order rather than alphabetically.
+func KeyOrder(ctx context.Context, prefix string) []string {
+	orders, _ := kongfig.RenderKeyOrderKey.Read(ctx)
+	return orders[prefix]
+}
+
+// OrderedKeys returns the keys of data sorted by the key order for prefix from ctx,
+// with any keys not in the order appended alphabetically.
+func OrderedKeys(ctx context.Context, prefix string, data kongfig.ConfigData) []string {
+	ordered := KeyOrder(ctx, prefix)
+	if len(ordered) == 0 {
+		keys := make([]string, 0, len(data))
+		for k := range data {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys
+	}
+	seen := make(map[string]bool, len(data))
+	result := make([]string, 0, len(data))
+	for _, k := range ordered {
+		if _, ok := data[k]; ok {
+			result = append(result, k)
+			seen[k] = true
+		}
+	}
+	var extra []string
+	for k := range data {
+		if !seen[k] {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(extra)
+	return append(result, extra...)
+}
+
 // --- Filter helpers ---
 
 // BuildFilterSource constructs a FilterSource slice from a map of layer name → show bool.

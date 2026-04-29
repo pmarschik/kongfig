@@ -41,10 +41,10 @@ type ChangeFunc func()
 
 // Layer records one loaded source for --layers display.
 type Layer struct {
-	// Data holds the merged config values for this source layer.
-	Data   ConfigData
-	Parser Parser
-	Meta   LayerMeta
+	Parser   Parser
+	Data     ConfigData
+	KeyOrder map[string][]string
+	Meta     LayerMeta
 }
 
 // hookState groups event hooks and watch sources.
@@ -216,6 +216,10 @@ func New(opts ...Option) *Kongfig {
 // so any field tagged "redacted" (or inheriting redaction) is hidden in
 // rendered output without any extra call.
 //
+// Struct field declaration order is captured and used as the default render
+// order, so rendered output follows the Go struct layout instead of
+// alphabetical order.
+//
 // Additional options (e.g. [WithLogger], [WithRedactionFunc]) may be passed;
 // they are applied after the auto-derived redacted paths, so [WithRedacted]
 // can be used to extend or override the derived set.
@@ -237,6 +241,10 @@ func NewFor[T any](opts ...Option) *Kongfig {
 	cfgPaths := schema.ConfigPaths[T]()
 	if len(cfgPaths) > 0 {
 		opts = append([]Option{withConfigPaths(cfgPaths)}, opts...)
+	}
+	fieldOrder := schema.FieldOrderPaths[T]()
+	if len(fieldOrder) > 0 {
+		opts = append([]Option{withFieldOrder(fieldOrder)}, opts...)
 	}
 	// Append codec resolution AFTER user opts so WithCodec registrations are visible.
 	codecEntries := schema.CodecPaths[T]()
@@ -279,11 +287,11 @@ func (k *Kongfig) warnEnvCollisions(source string, incoming ConfigData, existing
 	}
 
 	incomingValues := incoming.FlatValues()
-	for _, layer := range existing {
-		if !isEnvSource(layer.Meta.Name) {
+	for i := range existing {
+		if !isEnvSource(existing[i].Meta.Name) {
 			continue
 		}
-		existingValues := layer.Data.FlatValues()
+		existingValues := existing[i].Data.FlatValues()
 		for path, incomingVal := range incomingValues {
 			existingVal, exists := existingValues[path]
 			if !exists {
@@ -297,7 +305,7 @@ func (k *Kongfig) warnEnvCollisions(source string, incoming ConfigData, existing
 			}
 			k.log().Warn("env provider collision: key already set by another env provider with a different value",
 				slog.String("key", path),
-				slog.String("existing_source", layer.Meta.Name),
+				slog.String("existing_source", existing[i].Meta.Name),
 				slog.String("new_source", source),
 				slog.String("hint", "use WithSilenceCollisions to suppress; check load order if unintentional"),
 			)

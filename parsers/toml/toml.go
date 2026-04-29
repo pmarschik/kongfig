@@ -35,6 +35,41 @@ func (Parser) Unmarshal(b []byte) (kongfig.ConfigData, error) {
 	return kongfig.ToConfigData(out), nil
 }
 
+// UnmarshalWithKeyOrder decodes TOML bytes and also returns the key insertion order
+// per parent path from the document. Implements [kongfig.KeyOrderParser].
+func (Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]string, error) {
+	var out map[string]any
+	meta, err := toml.Decode(string(b), &out)
+	if err != nil {
+		return nil, nil, err
+	}
+	// meta.Keys() returns all keys in document order as dot-delimited paths.
+	keyOrder := make(map[string][]string)
+	seen := make(map[string]map[string]bool)
+	for _, k := range meta.Keys() {
+		// toml.Key is a []string (the path segments).
+		segments := []string(k)
+		if len(segments) == 0 {
+			continue
+		}
+		// The parent path is all segments but the last; the child is the last segment.
+		parentSegments := segments[:len(segments)-1]
+		child := segments[len(segments)-1]
+		parent := strings.Join(parentSegments, ".")
+		if seen[parent] == nil {
+			seen[parent] = make(map[string]bool)
+		}
+		if !seen[parent][child] {
+			seen[parent][child] = true
+			keyOrder[parent] = append(keyOrder[parent], child)
+		}
+	}
+	if len(keyOrder) == 0 {
+		keyOrder = nil
+	}
+	return kongfig.ToConfigData(out), keyOrder, nil
+}
+
 // Marshal encodes a map to TOML bytes.
 // The returned bytes always end with a trailing newline (added by the TOML encoder).
 func (Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
@@ -75,13 +110,9 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 }
 
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix, tableHeader string, align bool) error { //nolint:gocognit,cyclop // complex recursive renderer, intentional
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := render.OrderedKeys(ctx, prefix, data)
 
-	// Scalars first, then tables (TOML convention)
+	// Scalars first, then tables (TOML convention: scalars must precede [table] sections)
 	var scalars, tables []string
 	for _, k := range keys {
 		if _, ok := data[k].(kongfig.ConfigData); ok {
@@ -98,9 +129,10 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		}
 	}
 
-	// Print table header if needed (for nested sections)
-	if tableHeader != "" && (len(scalars) > 0 || len(tables) > 0) {
-		fmt.Fprintf(w, "\n%s\n", s.Syntax("["+tableHeader+"]"))
+	// Print table header only when this level owns scalars; sub-table-only
+	// sections are implied by their children's headers in TOML.
+	if tableHeader != "" && len(scalars) > 0 {
+		fmt.Fprintf(w, "\n%s\n", s.Syntax("[")+s.Key(tableHeader)+s.Syntax("]"))
 	}
 
 	tty, _ := render.TTYSizeKey.Read(ctx)

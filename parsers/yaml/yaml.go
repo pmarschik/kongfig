@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"sort"
 	"strings"
 
 	kongfig "github.com/pmarschik/kongfig"
@@ -33,6 +32,57 @@ func (Parser) Unmarshal(b []byte) (kongfig.ConfigData, error) {
 		return nil, err
 	}
 	return kongfig.ToConfigData(out), nil
+}
+
+// UnmarshalWithKeyOrder decodes YAML bytes and also returns the key insertion order
+// per parent path, as observed in the document. Implements [kongfig.KeyOrderParser].
+func (Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]string, error) {
+	var node goyaml.Node
+	if err := goyaml.Unmarshal(b, &node); err != nil {
+		return nil, nil, err
+	}
+	// yaml.v3 wraps the document in a document node; the actual content is node.Content[0].
+	if node.Kind != goyaml.DocumentNode || len(node.Content) == 0 {
+		return kongfig.ConfigData{}, nil, nil
+	}
+	root := node.Content[0]
+	if root.Kind != goyaml.MappingNode {
+		// Non-map root (scalar, sequence): no key order to extract.
+		var out map[string]any
+		if err := node.Decode(&out); err != nil {
+			return nil, nil, err
+		}
+		return kongfig.ToConfigData(out), nil, nil
+	}
+	var out map[string]any
+	if err := root.Decode(&out); err != nil {
+		return nil, nil, err
+	}
+	keyOrder := make(map[string][]string)
+	collectYAMLKeyOrder(root, "", keyOrder)
+	return kongfig.ToConfigData(out), keyOrder, nil
+}
+
+// collectYAMLKeyOrder walks a YAML mapping node and records key insertion order
+// per parent path into out.
+func collectYAMLKeyOrder(node *goyaml.Node, prefix string, out map[string][]string) {
+	if node.Kind != goyaml.MappingNode {
+		return
+	}
+	// MappingNode Content is [key1, val1, key2, val2, ...]
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valNode := node.Content[i+1]
+		key := keyNode.Value
+		out[prefix] = append(out[prefix], key)
+		if valNode.Kind == goyaml.MappingNode {
+			childPath := key
+			if prefix != "" {
+				childPath = prefix + "." + key
+			}
+			collectYAMLKeyOrder(valNode, childPath, out)
+		}
+	}
 }
 
 // Marshal encodes a map to indented YAML bytes.
@@ -78,11 +128,7 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 
 //nolint:gocognit,cyclop,nestif // complex recursive renderer, intentional
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix string, indent int, align bool) error {
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := render.OrderedKeys(ctx, prefix, data)
 
 	pad := strings.Repeat("  ", indent)
 	tty, _ := render.TTYSizeKey.Read(ctx)

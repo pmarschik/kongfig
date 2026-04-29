@@ -521,8 +521,8 @@ func layerHeader(ctx context.Context, layer kongfig.Layer, s kongfig.Styler) str
 // Used to populate VerboseSources for multi-source annotations.
 func verboseSources(layers []kongfig.Layer) map[string][]string {
 	out := make(map[string][]string)
-	for _, layer := range layers {
-		collectSources(layer.Data, layer.Meta.Name, "", out)
+	for i := range layers {
+		collectSources(layers[i].Data, layers[i].Meta.Name, "", out)
 	}
 	return out
 }

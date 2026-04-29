@@ -63,6 +63,11 @@ func prepareRender(ctx context.Context, kf *Kongfig, opts ...RenderOption) (Conf
 			ro.bind(renderRedactFnKey, cfg.RedactFn)
 		}
 	}
+	if _, ok := readOpts[map[string][]string](ro, RenderKeyOrderKey); !ok {
+		if cfg.FieldOrder != nil {
+			ro.bind(RenderKeyOrderKey, cfg.FieldOrder)
+		}
+	}
 
 	// Merge registered path meta from Kongfig (e.g. split separators, codec paths from NewFor[T]).
 	// codecPathsKey entries flow through here automatically — no special injection needed.

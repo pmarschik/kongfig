@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	kongfig "github.com/pmarschik/kongfig"
@@ -134,11 +133,7 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 
 //nolint:gocognit // complex recursive renderer, intentional
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, data kongfig.ConfigData, prefix string, depth int, align bool) error {
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := render.OrderedKeys(ctx, prefix, data)
 
 	pad := strings.Repeat(p.indent(), depth)
 

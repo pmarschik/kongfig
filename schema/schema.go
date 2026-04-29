@@ -325,6 +325,64 @@ func MapSplitPaths[T any]() map[string]MapSplitSpec {
 	return out
 }
 
+// FieldOrderPaths reflects on T and returns a map of parent dot-path → ordered
+// child key names derived from the struct declaration order of T.
+// The root level uses "" as the key. Embedded and squashed fields are inlined into
+// their parent's order. Returns nil when T has no struct fields.
+//
+// The result can be passed directly to [kongfig.WithRenderKeyOrder] to preserve
+// struct field order in rendered output instead of the default alphabetical sort.
+// [kongfig.NewFor] calls this automatically.
+func FieldOrderPaths[T any]() map[string][]string {
+	out := make(map[string][]string)
+	collectFieldOrder(reflect.TypeFor[T](), "", out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func collectFieldOrder(typ reflect.Type, prefix string, out map[string][]string) {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct {
+		return
+	}
+	for field := range typ.Fields() {
+		if field.Anonymous {
+			// Embedded struct: inline its fields into the parent level.
+			collectFieldOrder(field.Type, prefix, out)
+			continue
+		}
+		if !field.IsExported() {
+			continue
+		}
+		ft := ParseFieldTag(field.Tag.Get("kongfig"), field.Name)
+		if ft.Skip {
+			continue
+		}
+		if ft.Squash {
+			// Squashed struct: inline its fields into the parent level.
+			collectFieldOrder(field.Type, prefix, out)
+			continue
+		}
+		out[prefix] = append(out[prefix], ft.Name)
+
+		subTyp := field.Type
+		for subTyp.Kind() == reflect.Pointer {
+			subTyp = subTyp.Elem()
+		}
+		if subTyp.Kind() == reflect.Struct {
+			childPath := ft.Name
+			if prefix != "" {
+				childPath = prefix + "." + ft.Name
+			}
+			collectFieldOrder(field.Type, childPath, out)
+		}
+	}
+}
+
 // HelpTextPaths reflects on T and returns a map of dot-path → help text for fields
 // whose kongfig tag includes a help='...' extra. The result can be passed directly
 // to [kongfig.WithRenderHelpTexts].

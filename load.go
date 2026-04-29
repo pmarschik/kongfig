@@ -121,10 +121,16 @@ func (k *Kongfig) Load(ctx context.Context, provider Provider, opts ...LoadOptio
 		fieldNames = pfns.FieldNames()
 	}
 
+	// Collect key insertion order from providers that support it (e.g. file provider).
+	var keyOrder map[string][]string
+	if kop, ok := provider.(KeyOrderProvider); ok {
+		keyOrder = kop.KeyOrder()
+	}
+
 	// Extract parser format name for LayerMeta.
 	format := parserFormat(parser)
 
-	return k.commitLayer(data, source, kind, format, parser, pd, fieldNames)
+	return k.commitLayer(data, source, kind, format, parser, pd, fieldNames, keyOrder)
 }
 
 // MustLoad calls Load and panics on error. Useful in init-time setup where
@@ -166,7 +172,7 @@ func (k *Kongfig) LoadParsed(data ConfigData, source string, opts ...LoadOption)
 		k.registerParsersLocked(cfg.parser)
 		k.mu.Unlock()
 	}
-	return k.commitLayer(data, source, inferKind(source), parserFormat(cfg.parser), cfg.parser, cfg.providerData, nil)
+	return k.commitLayer(data, source, inferKind(source), parserFormat(cfg.parser), cfg.parser, cfg.providerData, nil, nil)
 }
 
 // parserFormat returns the format name from a parser if it implements ParserNamer, else "".
@@ -180,7 +186,7 @@ func parserFormat(p Parser) string {
 	return ""
 }
 
-func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, parser Parser, pd ProviderData, fieldNames map[string]string) error {
+func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, parser Parser, pd ProviderData, fieldNames map[string]string, keyOrder map[string][]string) error {
 	// Build LayerMeta: stamp ID, name, kind, format and timestamp; store provider data.
 	lm := LayerMeta{
 		ID:        nextSourceID(),
@@ -240,7 +246,7 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 	delta := make(ConfigData)
 	proposed.mergeFrom(data, sm, proposedProv, k.cfg.mergeFuncs, delta, "")
 	snapshot := data.Clone()
-	layer := Layer{Meta: lm, Data: snapshot, Parser: parser}
+	layer := Layer{Meta: lm, Data: snapshot, Parser: parser, KeyOrder: keyOrder}
 	hooks := make([]LoadFunc, len(k.hooks.onLoad))
 	copy(hooks, k.hooks.onLoad)
 	k.mu.Unlock()

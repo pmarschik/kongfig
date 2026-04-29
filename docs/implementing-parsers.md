@@ -119,6 +119,7 @@ Each parser's test file should cover:
 - [ ] `render.HelpTexts` injects help comments (if format supports comments)
 - [ ] `render.AlignSources` aligns annotations at the same column (default on; opt out via `WithRenderNoAlignSources`)
 - [ ] Styler dispatch: `Number`, `Bool`, `Null` are called for correct value types
+- [ ] Typed slice rendering: `[]SomeStruct` and `[]any{ConfigData{...}}` must produce format-native syntax, not Go's `%v` output (`[map[key:val] ...]`)
 
 ## Format-specific notes
 
@@ -133,8 +134,10 @@ Each parser's test file should cover:
 - Scalars are rendered before tables (TOML convention: inline values first, then `[section]` headers).
 - Section headers use `s.Syntax("[header]")`.
 - Help comments use `# prefix`.
+- Slices of any element type render as `[...]` inline arrays. Use `reflect.TypeOf(v).Kind() == reflect.Slice` rather than a `[]any` type switch; typed slices like `[]SomeStruct` would otherwise fall through to Go's `%v` format.
 
 ### YAML (`parsers/yaml`)
 
 - Help comments use `# prefix`.
 - Supports nested maps via recursive `renderMap`.
+- Slices and maps render as YAML flow syntax (`[{k: v}, ...]`). Use `reflect.TypeOf(v).Kind()` to detect any slice/map — typed slices like `[]SomeStruct` would otherwise fall through to Go's `%v` format.

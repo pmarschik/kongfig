@@ -264,6 +264,51 @@ func (p *staticProvider) ProviderInfo() kongfig.ProviderInfo {
 	return kongfig.ProviderInfo{Name: p.source}
 }
 
+// taggedItem is a generic named struct for testing typed-slice rendering.
+type taggedItem struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value,omitempty"`
+}
+
+func TestBindRender_TypedSlice(t *testing.T) {
+	// []taggedItem is not []any or []string — must still render as YAML flow list.
+	items := []taggedItem{{Name: "alpha", Value: "one"}, {Name: "beta"}}
+	data := kongfig.ConfigData{"items": kongfig.RenderedValue{Value: items}}
+	var buf bytes.Buffer
+	r := yamlparser.Default.Bind(plainStyler{})
+	if err := r.Render(context.Background(), &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "map[") {
+		t.Errorf("got Go %%v format for typed slice — expected YAML flow syntax:\n%s", out)
+	}
+	if !strings.Contains(out, "items: [") {
+		t.Errorf("expected items rendered as YAML flow list, got:\n%s", out)
+	}
+}
+
+func TestBindRender_AnySliceOfMaps(t *testing.T) {
+	// []any containing ConfigData elements (the post-unmarshal form for YAML lists of maps).
+	items := []any{
+		kongfig.ConfigData{"name": "alpha", "value": "one"},
+		kongfig.ConfigData{"name": "beta"},
+	}
+	data := kongfig.ConfigData{"items": kongfig.RenderedValue{Value: items}}
+	var buf bytes.Buffer
+	r := yamlparser.Default.Bind(plainStyler{})
+	if err := r.Render(context.Background(), &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "map[") {
+		t.Errorf("got Go %%v format for []any slice — expected YAML flow syntax:\n%s", out)
+	}
+	if !strings.Contains(out, "items: [") {
+		t.Errorf("expected items rendered as YAML flow list, got:\n%s", out)
+	}
+}
+
 func TestYAMLRenderer_AlignSources(t *testing.T) {
 	kf := kongfig.New()
 	if err := kf.Load(context.Background(), &staticProvider{

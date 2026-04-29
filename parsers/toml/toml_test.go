@@ -265,6 +265,53 @@ func TestStylerDispatch(t *testing.T) {
 	}
 }
 
+// --- Typed slice / struct rendering ---
+
+// taggedItem is a generic named struct for testing typed-slice rendering.
+type taggedItem struct {
+	Name  string `toml:"name"`
+	Value string `toml:"value,omitempty"`
+}
+
+func TestBindRender_TypedSlice(t *testing.T) {
+	// []taggedItem is not []any or []string — must still render as TOML inline array.
+	items := []taggedItem{{Name: "alpha", Value: "one"}, {Name: "beta"}}
+	data := kongfig.ConfigData{"items": kongfig.RenderedValue{Value: items}}
+	var buf bytes.Buffer
+	r := tomlparser.Default.Bind(plainStyler{})
+	if err := r.Render(context.Background(), &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "map[") {
+		t.Errorf("got Go %%v format for typed slice — expected TOML inline syntax:\n%s", out)
+	}
+	if !strings.Contains(out, "items = [") {
+		t.Errorf("expected items rendered as TOML inline array, got:\n%s", out)
+	}
+}
+
+func TestBindRender_AnySliceOfMaps(t *testing.T) {
+	// []any containing ConfigData elements (the post-unmarshal form for TOML array of tables).
+	items := []any{
+		kongfig.ConfigData{"name": "alpha", "value": "one"},
+		kongfig.ConfigData{"name": "beta"},
+	}
+	data := kongfig.ConfigData{"items": kongfig.RenderedValue{Value: items}}
+	var buf bytes.Buffer
+	r := tomlparser.Default.Bind(plainStyler{})
+	if err := r.Render(context.Background(), &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "map[") {
+		t.Errorf("got Go %%v format for []any slice — expected TOML inline syntax:\n%s", out)
+	}
+	if !strings.Contains(out, "items = [") {
+		t.Errorf("expected items rendered as TOML inline array, got:\n%s", out)
+	}
+}
+
 // plainStyler is a local no-op Styler for tests.
 type plainStyler struct{}
 

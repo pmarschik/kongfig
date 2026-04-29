@@ -12,6 +12,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	kongfig "github.com/pmarschik/kongfig"
@@ -266,18 +267,8 @@ func Explicit(path string) *explicitDiscoverer { return &explicitDiscoverer{path
 func (*explicitDiscoverer) Name() string { return "explicit" }
 
 func (d *explicitDiscoverer) Discover(_ context.Context, exts []string) (string, error) {
-	if len(exts) > 0 {
-		fileExt := filepath.Ext(d.path)
-		matched := false
-		for _, ext := range exts {
-			if fileExt == ext {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return "", nil
-		}
+	if len(exts) > 0 && !slices.Contains(exts, filepath.Ext(d.path)) {
+		return "", nil
 	}
 	if info, err := os.Stat(d.path); err == nil && !info.IsDir() {
 		return d.path, nil

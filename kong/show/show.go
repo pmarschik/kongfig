@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	envprovider "github.com/pmarschik/kongfig/providers/env"
 	render "github.com/pmarschik/kongfig/render"
 	"github.com/pmarschik/kongfig/style/plain"
+	"golang.org/x/term"
 )
 
 // FormatFlag adds --format.
@@ -153,14 +155,33 @@ func (f *Flags) Options(k *kongfig.Kongfig) []kongfig.RenderOption {
 	return opts
 }
 
+// autoTTYOpt returns a [render.WithTTYSize] option when w is a terminal.
+// Returns nil when w is not a terminal or the size cannot be determined.
+func autoTTYOpt(w io.Writer) kongfig.RenderOption {
+	if f, ok := w.(*os.File); ok {
+		fd := int(f.Fd()) //nolint:gosec // G115: fd values fit in int on all supported platforms
+		if term.IsTerminal(fd) {
+			if cols, rows, err := term.GetSize(fd); err == nil {
+				return render.WithTTYSize(cols, rows)
+			}
+		}
+	}
+	return nil
+}
+
 // Render writes configuration output to w using k as the data source.
 // Pass plain.New() as s to disable colors; pass nil to use plain automatically.
 func (f *Flags) Render(ctx context.Context, w io.Writer, k *kongfig.Kongfig, s kongfig.Styler, opts ...kongfig.RenderOption) error {
 	if s == nil {
 		s = plain.New()
 	}
+	// Auto-detect terminal size; caller opts can override.
+	var ttyOpt []kongfig.RenderOption
+	if tty := autoTTYOpt(w); tty != nil {
+		ttyOpt = []kongfig.RenderOption{tty}
+	}
 	// Merge flag-derived options first, then caller opts (caller wins).
-	allOpts := append(f.Options(k), opts...)
+	allOpts := append(append(ttyOpt, f.Options(k)...), opts...)
 
 	renderers := buildFormatRenderers(k)
 	format := effectiveFormat(f.Format, k)
@@ -209,7 +230,11 @@ func (f *SimpleFlags) Render(ctx context.Context, w io.Writer, k *kongfig.Kongfi
 	if s == nil || f.Plain {
 		s = plain.New()
 	}
-	allOpts := append(f.Options(k), opts...)
+	var ttyOpt []kongfig.RenderOption
+	if tty := autoTTYOpt(w); tty != nil {
+		ttyOpt = []kongfig.RenderOption{tty}
+	}
+	allOpts := append(append(ttyOpt, f.Options(k)...), opts...)
 
 	renderers := buildFormatRenderers(k)
 	format := effectiveFormat("", k)

@@ -102,6 +102,9 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		fmt.Fprintf(w, "\n%s\n", s.Syntax("["+tableHeader+"]"))
 	}
 
+	tty, _ := render.TTYSizeKey.Read(ctx)
+	cols := tty.Cols
+
 	for _, k := range scalars {
 		v := data[k]
 		path := k
@@ -122,7 +125,25 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 			fmt.Fprintf(w, "%s\n", s.Comment("# "+help))
 		}
 
-		line := s.Key(k) + " = " + render.Value(s, v, tomlValue(leafVal))
+		inline := tomlValue(leafVal)
+		keyW := render.VisualWidth(s.Key(k))
+
+		// For TOML arrays, switch to multiline when the inline form would overflow.
+		if isTOMLArray(leafVal) && cols > 0 && keyW+3+render.VisualWidth(inline) > cols {
+			if isRV {
+				if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+					fmt.Fprintf(w, "%s\n", s.Comment("# ")+ann)
+				}
+			}
+			fmt.Fprintf(w, "%s = [\n", s.Key(k))
+			for _, elem := range toTOMLSlice(leafVal) {
+				fmt.Fprintf(w, "  %s,\n", tomlValue(elem))
+			}
+			fmt.Fprintln(w, "]")
+			continue
+		}
+
+		line := s.Key(k) + " = " + render.Value(s, v, inline)
 		if isRV {
 			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
 				if align {
@@ -160,7 +181,31 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 	return nil
 }
 
-// tomlValue formats a scalar value for TOML output.
+// isTOMLArray reports whether v is a slice type for multiline-overflow detection.
+func isTOMLArray(v any) bool {
+	switch v.(type) {
+	case []any, []string:
+		return true
+	}
+	return false
+}
+
+// toTOMLSlice normalizes []any and []string to []any for uniform element iteration.
+func toTOMLSlice(v any) []any {
+	switch val := v.(type) {
+	case []any:
+		return val
+	case []string:
+		out := make([]any, len(val))
+		for i, s := range val {
+			out[i] = s
+		}
+		return out
+	}
+	return nil
+}
+
+// tomlValue formats a value for TOML output.
 func tomlValue(v any) string {
 	switch val := v.(type) {
 	case string:
@@ -174,7 +219,40 @@ func tomlValue(v any) string {
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64:
 		return fmt.Sprintf("%v", val)
+	case []any:
+		return tomlArray(val)
+	case []string:
+		out := make([]any, len(val))
+		for i, s := range val {
+			out[i] = s
+		}
+		return tomlArray(out)
+	case map[string]any:
+		return tomlInlineTable(val)
 	default:
 		return fmt.Sprintf("%q", strings.TrimSpace(fmt.Sprintf("%v", val)))
 	}
+}
+
+// tomlArray formats a slice as a TOML inline array: ["v1", "v2"].
+func tomlArray(vals []any) string {
+	parts := make([]string, len(vals))
+	for i, v := range vals {
+		parts[i] = tomlValue(v)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// tomlInlineTable formats a map as a TOML inline table: {k = "v"}.
+func tomlInlineTable(m map[string]any) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, len(keys))
+	for i, k := range keys {
+		pairs[i] = k + " = " + tomlValue(m[k])
+	}
+	return "{" + strings.Join(pairs, ", ") + "}"
 }

@@ -75,7 +75,7 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-//nolint:gocognit // complex recursive renderer, intentional
+//nolint:gocognit,cyclop,nestif // complex recursive renderer, intentional
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix string, indent int, align bool) error {
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -84,6 +84,8 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 	sort.Strings(keys)
 
 	pad := strings.Repeat("  ", indent)
+	tty, _ := render.TTYSizeKey.Read(ctx)
+	cols := tty.Cols
 
 	for _, k := range keys {
 		v := data[k]
@@ -113,11 +115,54 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 			fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
 		}
 
+		// Determine the raw leaf value (for collection type dispatch).
+		var rawVal any
+		if isRV {
+			rawVal = rv.Value
+		} else {
+			rawVal = v
+		}
+
+		// Collections (slices, maps) use YAML-native syntax and switch to block
+		// style when the inline form would exceed the terminal width.
 		var formatted string
-		if isRV && !rv.Redacted {
-			formatted = fmt.Sprintf("%v", rv.Value)
-		} else if !isRV {
-			formatted = fmt.Sprintf("%v", v)
+		var blockLines []string
+		if !isRV || !rv.Redacted {
+			switch {
+			case isYAMLCollection(rawVal):
+				inline := yamlFlowValue(rawVal)
+				keyW := render.VisualWidth(s.Key(k))
+				if cols > 0 && len(pad)+keyW+2+render.VisualWidth(inline) > cols {
+					if b, err := goyaml.Marshal(rawVal); err == nil {
+						for bl := range strings.SplitSeq(strings.TrimRight(string(b), "\n"), "\n") {
+							blockLines = append(blockLines, bl)
+						}
+					} else {
+						formatted = inline // marshal failed, use inline as fallback
+					}
+				} else {
+					formatted = inline
+				}
+			case isRV:
+				formatted = fmt.Sprintf("%v", rv.Value)
+			default:
+				formatted = fmt.Sprintf("%v", v)
+			}
+		}
+
+		if len(blockLines) > 0 {
+			// Block form: annotation goes above the key line.
+			if isRV {
+				if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+					fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+ann)
+				}
+			}
+			fmt.Fprintf(w, "%s%s:\n", pad, s.Key(k))
+			blockPad := pad + "  "
+			for _, bl := range blockLines {
+				fmt.Fprintf(w, "%s%s\n", blockPad, bl)
+			}
+			continue
 		}
 
 		line := fmt.Sprintf("%s%s: %s", pad, s.Key(k), render.Value(s, v, formatted))
@@ -133,4 +178,42 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		fmt.Fprintln(w, line)
 	}
 	return nil
+}
+
+// isYAMLCollection reports whether v is a slice or map type that deserves
+// YAML-native syntax rather than Go's default %v formatting.
+func isYAMLCollection(v any) bool {
+	switch v.(type) {
+	case []any, []string:
+		return true
+	}
+	return false
+}
+
+// yamlFlowValue renders v as a YAML flow (inline) representation.
+// For slices it produces "[v1, v2]"; for maps "{k: v}".
+func yamlFlowValue(v any) string {
+	b, err := goyaml.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	var root goyaml.Node
+	if err = goyaml.Unmarshal(b, &root); err != nil || len(root.Content) == 0 {
+		return strings.TrimRight(string(b), "\n")
+	}
+	setYAMLFlowStyle(root.Content[0])
+	b2, merr := goyaml.Marshal(root.Content[0])
+	if merr != nil {
+		return strings.TrimRight(string(b), "\n")
+	}
+	return strings.TrimRight(string(b2), "\n")
+}
+
+func setYAMLFlowStyle(n *goyaml.Node) {
+	if n.Kind == goyaml.SequenceNode || n.Kind == goyaml.MappingNode {
+		n.Style = goyaml.FlowStyle
+	}
+	for _, c := range n.Content {
+		setYAMLFlowStyle(c)
+	}
 }

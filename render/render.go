@@ -54,6 +54,7 @@ func AlignAnnotationsCtx(ctx context.Context, raw string, w io.Writer) error {
 	return writeAlignedAnnotations(raw, w, tty.Cols)
 }
 
+//nolint:gocognit,cyclop // multi-pass annotation layout algorithm, intentional
 func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
 
@@ -61,10 +62,9 @@ func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 		content string
 		ann     string
 		vw      int
+		annVW   int
 	}
 	parsed := make([]entry, len(lines))
-	maxVW := 0
-	maxAnnVW := 0
 	for i, line := range lines {
 		parts := strings.SplitN(line, AnnMarker, 2)
 		e := entry{content: parts[0]}
@@ -73,30 +73,56 @@ func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 		}
 		e.vw = VisualWidth(e.content)
 		if e.ann != "" {
-			if e.vw > maxVW {
-				maxVW = e.vw
-			}
-			if annVW := VisualWidth(e.ann); annVW > maxAnnVW {
-				maxAnnVW = annVW
-			}
+			e.annVW = VisualWidth(e.ann)
 		}
 		parsed[i] = e
 	}
 
-	// Fall back to above-line annotations when terminal is too narrow for inline layout.
-	aboveLine := cols > 0 && maxVW+1+maxAnnVW > cols
+	// Per-line decision: a line's annotation goes above when the line itself
+	// (without alignment padding) would overflow the terminal.
+	above := make([]bool, len(parsed))
+	for i, e := range parsed {
+		if e.ann != "" {
+			above[i] = cols > 0 && e.vw+1+e.annVW > cols
+		}
+	}
 
-	for _, e := range parsed {
+	// Max content width for inline-annotated lines (alignment target).
+	maxInlineVW := 0
+	for i, e := range parsed {
+		if e.ann != "" && !above[i] && e.vw > maxInlineVW {
+			maxInlineVW = e.vw
+		}
+	}
+
+	// Re-check: alignment padding may push a line over the terminal limit.
+	for i, e := range parsed {
+		if e.ann == "" || above[i] {
+			continue
+		}
+		if cols > 0 && maxInlineVW+1+e.annVW > cols {
+			above[i] = true
+		}
+	}
+
+	// Recompute after re-check (some lines may have moved above).
+	maxInlineVW = 0
+	for i, e := range parsed {
+		if e.ann != "" && !above[i] && e.vw > maxInlineVW {
+			maxInlineVW = e.vw
+		}
+	}
+
+	for i, e := range parsed {
 		switch {
 		case e.ann == "":
 			_, _ = fmt.Fprintln(w, e.content)
-		case aboveLine:
+		case above[i]:
 			indent := leadingWhitespace(e.content)
 			_, _ = fmt.Fprintln(w, indent+strings.TrimLeft(e.ann, " "))
 			_, _ = fmt.Fprintln(w, e.content)
 		default:
-			pad := strings.Repeat(" ", maxVW-e.vw+1)
-			_, _ = fmt.Fprintln(w, e.content+pad+e.ann)
+			_, _ = fmt.Fprintln(w, e.content+strings.Repeat(" ", maxInlineVW-e.vw+1)+e.ann)
 		}
 	}
 	return nil

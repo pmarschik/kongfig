@@ -8,6 +8,7 @@ use (
 	./example/minimal
 	./kong
 	./kong/charming
+	./kong/show
 	./parsers/toml
 	./parsers/yaml
 	./providers/file

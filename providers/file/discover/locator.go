@@ -72,6 +72,23 @@ func LocateAppDir() FileLocator {
 	}
 }
 
+// LocateNames returns a FileLocator that probes <dir>/<name><ext> for each name
+// and each extension, trying names in order. Unlike [LocateConfigBase] and
+// [LocateAppFlat], LocateNames uses the exact names given without deriving them
+// from context.
+//
+//	discover.Compose("local", discover.WorkdirDirs(), discover.LocateNames(".yard.local", ".yard-demo-config"))
+func LocateNames(names ...string) FileLocator {
+	return func(_ context.Context, dir string, exts []string) string {
+		for _, name := range names {
+			if p := findFile(dir, name, exts); p != "" {
+				return p
+			}
+		}
+		return ""
+	}
+}
+
 // LocateFirst returns a FileLocator that tries each locator in order and
 // returns the first non-empty result.
 func LocateFirst(locs ...FileLocator) FileLocator {

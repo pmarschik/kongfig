@@ -8,24 +8,14 @@ import (
 	"github.com/pmarschik/kongfig/schema"
 )
 
-// loadPathKey reads the value of key from kf's current merged state and loads
-// the referenced file(s) as additional layers. The value may be a string (single
-// path) or a []string / []any (multiple paths, e.g. after sep= splitting).
-// No-op if the key is absent or all paths are empty.
-func loadPathKey(ctx context.Context, kf *kongfig.Kongfig, key string, opts ...kongfig.LoadOption) (bool, error) {
-	flat := kf.Flat()
-	pathVal, ok := flat[key]
-	if !ok {
-		return false, nil
-	}
-	switch v := pathVal.(type) {
+// configPathsToSlice normalises a config path value to a slice of strings.
+// The value may be a string (single path) or a []string / []any produced by sep= splitting.
+func configPathsToSlice(v any) []string {
+	switch v := v.(type) {
 	case string:
-		if v == "" {
-			return false, nil
-		}
-		return true, loadOnePath(ctx, kf, key, v, opts...)
+		return []string{v}
 	case []string:
-		return loadPathSlice(ctx, kf, key, v, opts...)
+		return v
 	case []any:
 		paths := make([]string, 0, len(v))
 		for _, elem := range v {
@@ -33,32 +23,10 @@ func loadPathKey(ctx context.Context, kf *kongfig.Kongfig, key string, opts ...k
 				paths = append(paths, s)
 			}
 		}
-		return loadPathSlice(ctx, kf, key, paths, opts...)
+		return paths
 	default:
-		return false, nil
+		return nil
 	}
-}
-
-func loadOnePath(ctx context.Context, kf *kongfig.Kongfig, key, path string, opts ...kongfig.LoadOption) error {
-	parser, err := kongfig.ParserForPath(path, kf.Parsers())
-	if err != nil {
-		return fmt.Errorf("file: config key %q = %q: %w", key, path, err)
-	}
-	return kf.Load(ctx, New(path, parser), opts...)
-}
-
-func loadPathSlice(ctx context.Context, kf *kongfig.Kongfig, key string, paths []string, opts ...kongfig.LoadOption) (bool, error) {
-	loaded := false
-	for _, path := range paths {
-		if path == "" {
-			continue
-		}
-		if err := loadOnePath(ctx, kf, key, path, opts...); err != nil {
-			return true, err
-		}
-		loaded = true
-	}
-	return loaded, nil
 }
 
 // LoadConfigPaths loads files for each entry in entries by reading the path value
@@ -68,12 +36,27 @@ func loadPathSlice(ctx context.Context, kf *kongfig.Kongfig, key string, paths [
 //
 // Returns on the first error. Files whose key is absent or empty are silently skipped.
 func LoadConfigPaths(ctx context.Context, kf *kongfig.Kongfig, entries []schema.ConfigPathEntry, opts ...kongfig.LoadOption) error {
-	for _, e := range entries {
-		if _, err := loadPathKey(ctx, kf, e.Key, opts...); err != nil {
-			return err
+	return kf.DeriveLoad(ctx, func(in kongfig.DeriveInput) ([]kongfig.Provider, error) {
+		flat := in.Data.FlatValues()
+		var providers []kongfig.Provider
+		for _, e := range entries {
+			pathVal, ok := flat[e.Key]
+			if !ok {
+				continue
+			}
+			for _, path := range configPathsToSlice(pathVal) {
+				if path == "" {
+					continue
+				}
+				parser, err := kongfig.ParserForPath(path, kf.Parsers())
+				if err != nil {
+					return nil, fmt.Errorf("file: config key %q = %q: %w", e.Key, path, err)
+				}
+				providers = append(providers, New(path, parser))
+			}
 		}
-	}
-	return nil
+		return providers, nil
+	}, opts...)
 }
 
 // MustLoadConfigPaths is like [LoadConfigPaths] but panics on error.

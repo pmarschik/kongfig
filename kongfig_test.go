@@ -798,3 +798,77 @@ func TestDerive_ProvenanceInFn(t *testing.T) {
 		t.Errorf("y source: want %q, got %q", "file", got)
 	}
 }
+
+func TestDeriveLoad_LoadsReturnedProviders(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{data: map[string]any{"roots": []any{"a", "b"}}, source: "defaults"})
+
+	err := k.DeriveLoad(context.Background(), func(in kongfig.DeriveInput) ([]kongfig.Provider, error) {
+		roots, ok := in.Data["roots"].([]any)
+		if !ok {
+			return nil, errors.New("roots not a slice")
+		}
+		providers := make([]kongfig.Provider, 0, len(roots))
+		for _, r := range roots {
+			name, ok := r.(string)
+			if !ok {
+				continue
+			}
+			providers = append(providers, &staticProvider{
+				data:   map[string]any{"loaded_" + name: true},
+				source: "derived." + name,
+			})
+		}
+		return providers, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all := k.All()
+	if all["loaded_a"] != true {
+		t.Errorf("loaded_a: got %v, want true", all["loaded_a"])
+	}
+	if all["loaded_b"] != true {
+		t.Errorf("loaded_b: got %v, want true", all["loaded_b"])
+	}
+
+	layers := k.Layers()
+	if len(layers) != 3 {
+		t.Fatalf("layers: got %d, want 3 (defaults + derived.a + derived.b)", len(layers))
+	}
+	if layers[1].Meta.Name != "derived.a" || layers[2].Meta.Name != "derived.b" {
+		t.Errorf("layer names: got %q, %q", layers[1].Meta.Name, layers[2].Meta.Name)
+	}
+}
+
+func TestDeriveLoad_FnError_NoLoad(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{data: map[string]any{"x": 1}, source: "defaults"})
+
+	fnErr := errors.New("fn failed")
+	err := k.DeriveLoad(context.Background(), func(_ kongfig.DeriveInput) ([]kongfig.Provider, error) {
+		return nil, fnErr
+	})
+	if !errors.Is(err, fnErr) {
+		t.Errorf("want fnErr, got %v", err)
+	}
+	if len(k.Layers()) != 1 {
+		t.Errorf("layers: got %d, want 1 (no providers loaded on fn error)", len(k.Layers()))
+	}
+}
+
+func TestDeriveLoad_EmptyProviders_NoOp(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{data: map[string]any{"x": 1}, source: "defaults"})
+
+	err := k.DeriveLoad(context.Background(), func(_ kongfig.DeriveInput) ([]kongfig.Provider, error) {
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(k.Layers()) != 1 {
+		t.Errorf("layers: got %d, want 1", len(k.Layers()))
+	}
+}

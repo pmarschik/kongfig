@@ -367,3 +367,56 @@ func (k *Kongfig) Derive(fn DeriveFn) error {
 
 	return nil
 }
+
+// DeriveLoadFn is the signature for functions passed to [Kongfig.DeriveLoad].
+// It receives the current merged configuration and provenance, and returns a
+// slice of providers to load in order.
+// Returning an error aborts the DeriveLoad operation before any providers are loaded.
+type DeriveLoadFn func(DeriveInput) ([]Provider, error)
+
+// DeriveLoad calls fn with the current merged state, then loads each returned
+// [Provider] in order via [Kongfig.Load].
+//
+// This bridges the gap between [Derive] (which produces overlay data) and the
+// common pattern of computing file paths — or any other provider inputs — from
+// the current config and loading them as full layers with their own source labels,
+// parsers, and provenance.
+//
+// Each provider is loaded with opts applied, so callers can pass [WithSource] or
+// other options that apply uniformly to all derived providers. Per-provider options
+// (e.g. a source label unique to each file) should be embedded in the Provider
+// itself or wrapped via a custom Provider implementation.
+//
+// Use this after base providers are loaded:
+//
+//	k.MustLoad(ctx, defaults)
+//	k.MustLoad(ctx, envProvider)
+//	k.DeriveLoad(ctx, func(in kongfig.DeriveInput) ([]kongfig.Provider, error) {
+//	    cfg, _ := kongfig.Get[AppConfig](k)
+//	    var providers []kongfig.Provider
+//	    for _, root := range cfg.Roots {
+//	        providers = append(providers, file.Provider(filepath.Join(root, ".app.yaml")))
+//	    }
+//	    return providers, nil
+//	})
+//
+// Errors from fn, or from any [Kongfig.Load] call, abort the sequence and leave
+// the Kongfig in whatever state it was in after the last successful load.
+func (k *Kongfig) DeriveLoad(ctx context.Context, fn DeriveLoadFn, opts ...LoadOption) error {
+	k.mu.RLock()
+	current := k.data.Clone()
+	prov := k.prov.clone()
+	k.mu.RUnlock()
+
+	providers, err := fn(DeriveInput{Data: current, Provenance: prov})
+	if err != nil {
+		return err
+	}
+
+	for _, p := range providers {
+		if err := k.Load(ctx, p, opts...); err != nil {
+			return err
+		}
+	}
+	return nil
+}

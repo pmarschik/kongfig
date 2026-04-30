@@ -582,7 +582,15 @@ func TestDerive_BasicOverlay(t *testing.T) {
 	})
 
 	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
-		return kongfig.ConfigData{"fullname": cfg["name"].(string) + " v" + cfg["version"].(string)}, nil
+		name, ok := cfg["name"].(string)
+		if !ok {
+			return nil, errors.New("name not a string")
+		}
+		version, ok := cfg["version"].(string)
+		if !ok {
+			return nil, errors.New("version not a string")
+		}
+		return kongfig.ConfigData{"fullname": name + " v" + version}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -602,7 +610,15 @@ func TestDerive_MergesWithExisting(t *testing.T) {
 	})
 
 	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
-		return kongfig.ConfigData{"c": cfg["a"].(int) + cfg["b"].(int)}, nil
+		a, ok := cfg["a"].(int)
+		if !ok {
+			return nil, errors.New("a not an int")
+		}
+		b, ok := cfg["b"].(int)
+		if !ok {
+			return nil, errors.New("b not an int")
+		}
+		return kongfig.ConfigData{"c": a + b}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -625,7 +641,7 @@ func TestDerive_Error(t *testing.T) {
 	})
 
 	testErr := errors.New("custom error")
-	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+	err := k.Derive(func(_ kongfig.ConfigData) (kongfig.ConfigData, error) {
 		return nil, testErr
 	})
 
@@ -655,9 +671,11 @@ func TestDerive_AddsToLayers(t *testing.T) {
 		t.Fatalf("initial layers: got %d, want 1", len(k.Layers()))
 	}
 
-	k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+	if err := k.Derive(func(_ kongfig.ConfigData) (kongfig.ConfigData, error) {
 		return kongfig.ConfigData{"y": 2}, nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	layers := k.Layers()
 	if len(layers) != 2 {
@@ -694,9 +712,15 @@ func TestDerive_CrossField(t *testing.T) {
 			return nil, errors.New("missing buckets or separators")
 		}
 
-		buckets := bucketsRaw.(kongfig.ConfigData)
-		separators := separatorsRaw.(kongfig.ConfigData)
-		prefix := separators["bucket_prefix"].(string)
+		buckets, ok1 := bucketsRaw.(kongfig.ConfigData)
+		separators, ok2 := separatorsRaw.(kongfig.ConfigData)
+		if !ok1 || !ok2 {
+			return nil, errors.New("unexpected types in config")
+		}
+		prefix, ok3 := separators["bucket_prefix"].(string)
+		if !ok3 {
+			return nil, errors.New("bucket_prefix not a string")
+		}
 
 		// Return overlay that adds dirname to each bucket
 		derived := make(kongfig.ConfigData)
@@ -712,9 +736,15 @@ func TestDerive_CrossField(t *testing.T) {
 	}
 
 	all := k.All()
-	buckets := all["buckets"].(kongfig.ConfigData)
-	ossDir := buckets["oss"].(kongfig.ConfigData)["dirname"]
-	if got := ossDir; got != "bucket_oss" {
+	buckets, ok := all["buckets"].(kongfig.ConfigData)
+	if !ok {
+		t.Fatal("buckets not a ConfigData")
+	}
+	oss, ok := buckets["oss"].(kongfig.ConfigData)
+	if !ok {
+		t.Fatal("oss bucket not a ConfigData")
+	}
+	if got := oss["dirname"]; got != "bucket_oss" {
 		t.Errorf("derived oss dirname: got %q, want %q", got, "bucket_oss")
 	}
 }
@@ -726,9 +756,11 @@ func TestDerive_Provenance(t *testing.T) {
 		source: "defaults",
 	})
 
-	k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+	if err := k.Derive(func(_ kongfig.ConfigData) (kongfig.ConfigData, error) {
 		return kongfig.ConfigData{"y": 2}, nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	prov := k.Provenance()
 	metas := prov.SourceMetas()

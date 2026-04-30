@@ -16,9 +16,9 @@ Every parser **must** implement:
 
 Every parser **should** also implement:
 
-| Interface                 | Method                                                                      | Purpose                                                                                  |
-| ------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `kongfig.KeyOrderParser`  | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)`    | Preserve document key order for `--layers` rendering via `file.Provider.KeyOrder()`     |
+| Interface                | Method                                                                   | Purpose                                                                             |
+| ------------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `kongfig.KeyOrderParser` | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)` | Preserve document key order for `--layers` rendering via `file.Provider.KeyOrder()` |
 
 Without `KeyOrderParser`, layers mode falls back to struct field order (from `NewFor[T]`) or
 alphabetical. Implement it if your format's text encoding has a meaningful key order.

@@ -261,7 +261,7 @@ func jsonDecodeObject(dec *json.Decoder, prefix string) (kongfig.ConfigData, map
 // jsonDecodeValue reads one JSON value from the decoder and returns its Go representation.
 // Nested objects are returned as [kongfig.ConfigData] with their key order captured.
 // Arrays are returned as []any; order within arrays is not tracked (elements have no string keys).
-func jsonDecodeValue(dec *json.Decoder, path string) (any, map[string][]string, error) {
+func jsonDecodeValue(dec *json.Decoder, path string) (val any, order map[string][]string, err error) {
 	t, err := dec.Token()
 	if err != nil {
 		return nil, nil, err

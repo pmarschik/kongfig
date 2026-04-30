@@ -7,6 +7,22 @@ import (
 	kongfig "github.com/pmarschik/kongfig"
 )
 
+// UserBaseDirs returns a DirProvider that yields platform-appropriate user
+// config base directories (without the appname component).
+func UserBaseDirs() DirProvider {
+	return func(_ context.Context) ([]DirEntry, error) {
+		return platformUserBaseDirs(), nil
+	}
+}
+
+// SystemBaseDirs returns a DirProvider that yields platform-appropriate system
+// config base directories (without the appname component).
+func SystemBaseDirs() DirProvider {
+	return func(_ context.Context) ([]DirEntry, error) {
+		return platformSystemBaseDirs(), nil
+	}
+}
+
 // FileStyle is a bitflag controlling which filename variants are searched by
 // [UserDirs] and [SystemDirs]. Combine with |; zero value searches both.
 type FileStyle int
@@ -90,8 +106,7 @@ func (u *userDirsDiscoverer) Discover(ctx context.Context, exts []string) (strin
 // Short mode (default): returns a concise token such as $xdg, ~/Library/AS, %APPDATA%.
 // Long mode ([WithLongDisplayPaths]): emits full path including app subdir and filename.
 func (*userDirsDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
-	app := kongfig.AppName(ctx)
-	return platformUserDisplayPath(ctx, app, foundPath)
+	return displayPathFromEntries(ctx, platformUserBaseDirs(), foundPath)
 }
 
 // systemDirsDiscoverer searches OS-appropriate system config directories.
@@ -166,6 +181,5 @@ func (s *systemDirsDiscoverer) Discover(ctx context.Context, exts []string) (str
 // Short mode (default): concise token (e.g. /etc, %ProgramData%). Long mode ([WithLongDisplayPaths]):
 // full path including app subdir and filename.
 func (*systemDirsDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
-	app := kongfig.AppName(ctx)
-	return platformSystemDisplayPath(ctx, app, foundPath)
+	return displayPathFromEntries(ctx, platformSystemBaseDirs(), foundPath)
 }

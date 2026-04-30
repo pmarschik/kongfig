@@ -3,10 +3,27 @@
 package discover
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 )
+
+// platformUserBaseDirs returns user-level config base directories on Windows,
+// without the appname component.
+func platformUserBaseDirs() []DirEntry {
+	if appData := os.Getenv("APPDATA"); appData != "" {
+		return []DirEntry{{appData, "%APPDATA%", "%APPDATA%"}}
+	}
+	return nil
+}
+
+// platformSystemBaseDirs returns system-level config base directories on Windows,
+// without the appname component.
+func platformSystemBaseDirs() []DirEntry {
+	if programData := os.Getenv("ProgramData"); programData != "" {
+		return []DirEntry{{programData, "%ProgramData%", "%ProgramData%"}}
+	}
+	return nil
+}
 
 // platformUserDirs returns <base>/<app> subdirectories to search for user config
 // files on Windows.
@@ -28,42 +45,4 @@ func platformSystemDirs(app string) []string {
 		dirs = append(dirs, filepath.Join(programData, app))
 	}
 	return dirs
-}
-
-// platformUserDisplayPath returns a symbolic display path for foundPath.
-// Short mode (default): $appdata (token only).
-// Long mode ([WithLongDisplayPaths]): %APPDATA%\<path>.
-func platformUserDisplayPath(ctx context.Context, _ string, foundPath string) string {
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		return ""
-	}
-	if !symPathContains(appData, foundPath) {
-		return ""
-	}
-	if DisplayPathIsLong(ctx) {
-		if p := symPath(appData, `%APPDATA%`, foundPath); p != "" {
-			return p
-		}
-	}
-	return `%APPDATA%`
-}
-
-// platformSystemDisplayPath returns a symbolic display path for foundPath.
-// Short mode (default): $progdata (token only).
-// Long mode ([WithLongDisplayPaths]): %ProgramData%\<path>.
-func platformSystemDisplayPath(ctx context.Context, _, foundPath string) string {
-	programData := os.Getenv("ProgramData")
-	if programData == "" {
-		return foundPath
-	}
-	if !symPathContains(programData, foundPath) {
-		return foundPath
-	}
-	if DisplayPathIsLong(ctx) {
-		if p := symPath(programData, `%ProgramData%`, foundPath); p != "" {
-			return p
-		}
-	}
-	return `%ProgramData%`
 }

@@ -20,6 +20,37 @@ func AppName(ctx context.Context) string {
 	return v
 }
 
+var configBaseKey = NewOptionsKey[string]()
+
+// WithConfigBase sets the config file basename used by file locators.
+// Defaults to "config" when not set (e.g. probes config.yaml, config.toml).
+func WithConfigBase(ctx context.Context, base string) context.Context {
+	return configBaseKey.With(ctx, base)
+}
+
+// ConfigBase returns the config file basename from ctx, defaulting to "config".
+func ConfigBase(ctx context.Context) string {
+	v, _ := configBaseKey.From(ctx)
+	if v == "" {
+		return "config"
+	}
+	return v
+}
+
+var hiddenFilesKey = NewOptionsKey[bool]()
+
+// WithHiddenFiles enables probing of dot-prefixed (hidden) appname variants.
+// When set, locators also probe .<appname>.<ext> and .<appname>/<configbase>.<ext>.
+func WithHiddenFiles(ctx context.Context) context.Context {
+	return hiddenFilesKey.With(ctx, true)
+}
+
+// HiddenFiles reports whether hidden file variants should be probed.
+func HiddenFiles(ctx context.Context) bool {
+	v, _ := hiddenFilesKey.From(ctx)
+	return v
+}
+
 // Strict returns a [GetOption] that makes [Get] fail if any struct field has no matching key.
 func Strict() GetOption { return bindGet(getStrictKey, true) }
 

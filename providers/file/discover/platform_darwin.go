@@ -3,11 +3,37 @@
 package discover
 
 import (
-	"context"
 	"os"
 	"path/filepath"
-	"strings"
 )
+
+// platformUserBaseDirs returns user-level config base directories on macOS,
+// without the appname component.
+// Search order: $XDG_CONFIG_HOME, ~/.config, ~/Library/Application Support.
+func platformUserBaseDirs() []DirEntry {
+	var entries []DirEntry
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		entries = append(entries, DirEntry{xdg, "$xdg", "$XDG_CONFIG_HOME"})
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		entries = append(entries,
+			DirEntry{filepath.Join(home, ".config"), "~/.config", "~/.config"},
+			DirEntry{filepath.Join(home, "Library", "Application Support"), "~/Library/AS", "~/Library/Application Support"},
+		)
+	}
+	return entries
+}
+
+// platformSystemBaseDirs returns system-level config base directories on macOS,
+// without the appname component.
+func platformSystemBaseDirs() []DirEntry {
+	return []DirEntry{
+		{"/etc", "/etc", "/etc"},
+		{"/usr/local/etc", "/brew/etc", "/usr/local/etc"},
+		{"/opt/homebrew/etc", "/brew/etc", "/opt/homebrew/etc"},
+		{"/Library/Application Support", "/Library/AS", "/Library/Application Support"},
+	}
+}
 
 // platformUserDirs returns <base>/<app> subdirectories to search for user config
 // files on macOS.
@@ -38,61 +64,4 @@ func platformSystemDirs(app string) []string {
 		"/opt/homebrew/etc/" + app,
 		"/Library/Application Support/" + app,
 	}
-}
-
-// platformUserDisplayPath returns a symbolic display path for foundPath on macOS.
-// Short mode (default): concise token — $xdg, ~/.config, ~/Library/AS.
-// Long mode ([WithLongDisplayPaths]): full path — $XDG_CONFIG_HOME/<path>, ~/.config/<path>,
-// ~/Library/Application Support/<path>.
-func platformUserDisplayPath(ctx context.Context, _, foundPath string) string {
-	long := DisplayPathIsLong(ctx)
-
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		if symPathContains(xdg, foundPath) {
-			if long {
-				p := symPath(xdg, "$XDG_CONFIG_HOME", foundPath)
-				return p
-			}
-			return "$xdg"
-		}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	if symPathContains(filepath.Join(home, ".config"), foundPath) {
-		if long {
-			p := symPath(filepath.Join(home, ".config"), "~/.config", foundPath)
-			return p
-		}
-		return "~/.config"
-	}
-	if symPathContains(filepath.Join(home, "Library", "Application Support"), foundPath) {
-		if long {
-			p := symPath(filepath.Join(home, "Library", "Application Support"), "~/Library/Application Support", foundPath)
-			return p
-		}
-		return "~/Library/AS"
-	}
-	return ""
-}
-
-// platformSystemDisplayPath returns a display path for system config paths on macOS.
-// Long mode: paths returned as-is.
-// Short mode: /Library/Application Support abbreviated to /Library/AS; /usr/local/etc and
-// /opt/homebrew/etc abbreviated to /brew/etc.
-func platformSystemDisplayPath(ctx context.Context, _, foundPath string) string {
-	if DisplayPathIsLong(ctx) {
-		return foundPath
-	}
-	if after, ok := strings.CutPrefix(foundPath, "/Library/Application Support/"); ok {
-		return "/Library/AS/" + after
-	}
-	if after, ok := strings.CutPrefix(foundPath, "/usr/local/etc/"); ok {
-		return "/brew/etc/" + after
-	}
-	if after, ok := strings.CutPrefix(foundPath, "/opt/homebrew/etc/"); ok {
-		return "/brew/etc/" + after
-	}
-	return foundPath
 }

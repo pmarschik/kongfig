@@ -42,13 +42,13 @@ Each `Load` call:
 
 ## Providers
 
-| Interface            | Purpose                                                                        |
-| -------------------- | ------------------------------------------------------------------------------ |
-| `Provider`           | Returns `map[string]any` on demand                                             |
-| `ByteProvider`       | Also exposes raw bytes (for format-native display)                             |
-| `WatchProvider`      | Calls a callback on live changes                                               |
-| `OutputProvider`     | Can produce its own `Renderer` via `Bind(Styler)`                              |
-| `KeyOrderProvider`   | Returns key insertion order from the last `Load` call for `--layers` rendering |
+| Interface          | Purpose                                                                        |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `Provider`         | Returns `map[string]any` on demand                                             |
+| `ByteProvider`     | Also exposes raw bytes (for format-native display)                             |
+| `WatchProvider`    | Calls a callback on live changes                                               |
+| `OutputProvider`   | Can produce its own `Renderer` via `Bind(Styler)`                              |
+| `KeyOrderProvider` | Returns key insertion order from the last `Load` call for `--layers` rendering |
 
 ### Source label conventions
 

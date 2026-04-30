@@ -3,10 +3,29 @@
 package discover
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 )
+
+// platformUserBaseDirs returns user-level config base directories on Linux/Unix,
+// without the appname component.
+// Search order: $XDG_CONFIG_HOME, ~/.config.
+func platformUserBaseDirs() []DirEntry {
+	var entries []DirEntry
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		entries = append(entries, DirEntry{xdg, "$xdg", "$XDG_CONFIG_HOME"})
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		entries = append(entries, DirEntry{filepath.Join(home, ".config"), "~/.config", "~/.config"})
+	}
+	return entries
+}
+
+// platformSystemBaseDirs returns system-level config base directories on Linux/Unix,
+// without the appname component.
+func platformSystemBaseDirs() []DirEntry {
+	return []DirEntry{{"/etc", "/etc", "/etc"}}
+}
 
 // platformUserDirs returns <base>/<app> subdirectories to search for user config
 // files on Linux and other Unix-like systems.
@@ -27,41 +46,4 @@ func platformUserDirs(app string) []string {
 // Search order: /etc/<app>.
 func platformSystemDirs(app string) []string {
 	return []string{"/etc/" + app}
-}
-
-// platformUserDisplayPath returns a symbolic display path for foundPath.
-// Short mode (default): $xdg or ~/.config (token only).
-// Long mode ([WithLongDisplayPaths]): $XDG_CONFIG_HOME/<path> or ~/.config/<path>.
-func platformUserDisplayPath(ctx context.Context, app, foundPath string) string {
-	long := DisplayPathIsLong(ctx)
-
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		if symPathContains(xdg, foundPath) {
-			if long {
-				p := symPath(xdg, "$XDG_CONFIG_HOME", foundPath)
-				return p
-			}
-			return "$xdg"
-		}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	configDir := filepath.Join(home, ".config")
-	if symPathContains(configDir, foundPath) {
-		if long {
-			p := symPath(configDir, "~/.config", foundPath)
-			return p
-		}
-		return "~/.config"
-	}
-	_ = app // app is not needed for Unix short paths
-	return ""
-}
-
-// platformSystemDisplayPath returns a display path for system config paths.
-// On Unix, system paths are absolute and returned as-is.
-func platformSystemDisplayPath(_ context.Context, _, foundPath string) string {
-	return foundPath
 }

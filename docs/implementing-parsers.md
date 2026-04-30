@@ -14,13 +14,23 @@ Every parser **must** implement:
 | `kongfig.ParserNamer`    | `Format()`, `Extensions()` | Format name and file extension matching       |
 | `kongfig.OutputProvider` | `Bind(Styler) Renderer`    | Styled output for `--layers` and `RenderWith` |
 
+Every parser **should** also implement:
+
+| Interface                 | Method                                                                      | Purpose                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `kongfig.KeyOrderParser`  | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)`    | Preserve document key order for `--layers` rendering via `file.Provider.KeyOrder()`     |
+
+Without `KeyOrderParser`, layers mode falls back to struct field order (from `NewFor[T]`) or
+alphabetical. Implement it if your format's text encoding has a meaningful key order.
+
 Add compile-time assertions to catch regressions early:
 
 ```go
 var (
-    _ kongfig.Parser         = Parser{}
-    _ kongfig.ParserNamer    = Parser{}
-    _ kongfig.OutputProvider = Parser{}
+    _ kongfig.Parser          = Parser{}
+    _ kongfig.ParserNamer     = Parser{}
+    _ kongfig.OutputProvider  = Parser{}
+    _ kongfig.KeyOrderParser  = Parser{}
 )
 ```
 

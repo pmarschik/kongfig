@@ -275,3 +275,77 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 
 	return nil
 }
+
+// DeriveFn is the signature for functions passed to [Kongfig.Derive].
+// It receives the current merged configuration and returns overlay data to be merged
+// with a "derived" source label. Returning an error aborts the derive operation.
+type DeriveFn func(ConfigData) (ConfigData, error)
+
+// Derive applies a user-supplied function to the current merged state and merges
+// the result back with a "derived" source label.
+//
+// This is a post-load operation for computing values that depend on multiple config
+// fields. The function receives the full merged ConfigData (all providers applied),
+// computes overlay data, and returns it; Kongfig merges it as a new layer.
+//
+// Use this after all providers are loaded:
+//
+//	k.MustLoad(ctx, provider1)
+//	k.MustLoad(ctx, provider2)
+//	k.MustLoad(ctx, k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+//	    // example: compute normalized bucket dirnames from map keys and separators
+//	    result := make(kongfig.ConfigData)
+//	    buckets := cfg["buckets"].(kongfig.ConfigData)
+//	    for k := range buckets {
+//	        result[k] = normalize(k, cfg["separators"]) // your logic
+//	    }
+//	    return result, nil
+//	}))
+//
+// Errors from fn cause Derive to return that error without modifying the Kongfig state.
+func (k *Kongfig) Derive(fn DeriveFn) error {
+	k.mu.RLock()
+	current := k.data.Clone()
+	k.mu.RUnlock()
+
+	// Call the derive function with the current merged state.
+	data, err := fn(current)
+	if err != nil {
+		return err
+	}
+
+	// Normalize the result (same normalization as Load does).
+	data = normalizeConfigData(data)
+
+	// Build LayerMeta with "derived" source label and kind.
+	lm := LayerMeta{
+		ID:        nextSourceID(),
+		Timestamp: time.Now(),
+		Name:      "derived",
+		Kind:      KindDerived,
+		Format:    "",
+		Data:      nil,
+	}
+
+	sm := SourceMeta{Layer: lm}
+
+	// Merge derived data into the current state.
+	k.mu.Lock()
+	proposed := k.data.Clone()
+	proposedProv := k.prov.clone()
+	delta := make(ConfigData)
+	proposed.mergeFrom(data, sm, proposedProv, k.cfg.mergeFuncs, delta, "")
+	snapshot := data.Clone()
+	layer := Layer{Meta: lm, Data: snapshot, Parser: nil, KeyOrder: nil}
+	k.mu.Unlock()
+
+	// Since Derive is a synchronous post-load operation with no hooks (unlike Load),
+	// we commit immediately without running OnLoad hooks.
+	k.mu.Lock()
+	k.data = proposed
+	k.prov = proposedProv
+	k.layers = append(k.layers, layer)
+	k.mu.Unlock()
+
+	return nil
+}

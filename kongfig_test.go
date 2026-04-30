@@ -573,3 +573,170 @@ func TestRenderWithDefaultFormat(t *testing.T) {
 		t.Errorf("explicit format: got %q, want %q", got, "yaml-output")
 	}
 }
+
+func TestDerive_BasicOverlay(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		data:   map[string]any{"name": "app", "version": "1.0"},
+		source: "defaults",
+	})
+
+	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+		return kongfig.ConfigData{"fullname": cfg["name"].(string) + " v" + cfg["version"].(string)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all := k.All()
+	if got := all["fullname"]; got != "app v1.0" {
+		t.Errorf("derived fullname: got %q, want %q", got, "app v1.0")
+	}
+}
+
+func TestDerive_MergesWithExisting(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		data:   map[string]any{"a": 1, "b": 2},
+		source: "defaults",
+	})
+
+	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+		return kongfig.ConfigData{"c": cfg["a"].(int) + cfg["b"].(int)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all := k.All()
+	if all["a"] != 1 || all["b"] != 2 {
+		t.Errorf("original values lost after derive")
+	}
+	if got := all["c"]; got != 3 {
+		t.Errorf("derived value: got %v, want 3", got)
+	}
+}
+
+func TestDerive_Error(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		data:   map[string]any{"x": "invalid"},
+		source: "defaults",
+	})
+
+	testErr := errors.New("custom error")
+	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+		return nil, testErr
+	})
+
+	if !errors.Is(err, testErr) {
+		t.Errorf("derive error: got %v, want %v", err, testErr)
+	}
+
+	// State should not change on error
+	all := k.All()
+	if all["x"] != "invalid" {
+		t.Errorf("state changed after derive error")
+	}
+	// Should still have only 1 layer (not 2)
+	if len(k.Layers()) != 1 {
+		t.Errorf("layers: got %d, want 1", len(k.Layers()))
+	}
+}
+
+func TestDerive_AddsToLayers(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		data:   map[string]any{"x": 1},
+		source: "defaults",
+	})
+
+	if len(k.Layers()) != 1 {
+		t.Fatalf("initial layers: got %d, want 1", len(k.Layers()))
+	}
+
+	k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+		return kongfig.ConfigData{"y": 2}, nil
+	})
+
+	layers := k.Layers()
+	if len(layers) != 2 {
+		t.Fatalf("after derive, layers: got %d, want 2", len(layers))
+	}
+	if layers[1].Meta.Name != "derived" {
+		t.Errorf("derived layer name: got %q, want %q", layers[1].Meta.Name, "derived")
+	}
+	if layers[1].Meta.Kind != kongfig.KindDerived {
+		t.Errorf("derived layer kind: got %q, want %q", layers[1].Meta.Kind, kongfig.KindDerived)
+	}
+}
+
+func TestDerive_CrossField(t *testing.T) {
+	// Example: compute normalized bucket dirnames from bucket names and a separator config.
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		data: map[string]any{
+			"buckets": map[string]any{
+				"oss": map[string]any{"name": "OSS"},
+				"s3":  map[string]any{"name": "S3"},
+			},
+			"separators": map[string]any{
+				"bucket_prefix": "bucket_",
+			},
+		},
+		source: "defaults",
+	})
+
+	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+		bucketsRaw := cfg["buckets"]
+		separatorsRaw := cfg["separators"]
+		if bucketsRaw == nil || separatorsRaw == nil {
+			return nil, errors.New("missing buckets or separators")
+		}
+
+		buckets := bucketsRaw.(kongfig.ConfigData)
+		separators := separatorsRaw.(kongfig.ConfigData)
+		prefix := separators["bucket_prefix"].(string)
+
+		// Return overlay that adds dirname to each bucket
+		derived := make(kongfig.ConfigData)
+		bucketsOverlay := make(kongfig.ConfigData)
+		for k := range buckets {
+			bucketsOverlay[k] = kongfig.ConfigData{"dirname": prefix + k}
+		}
+		derived["buckets"] = bucketsOverlay
+		return derived, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all := k.All()
+	buckets := all["buckets"].(kongfig.ConfigData)
+	ossDir := buckets["oss"].(kongfig.ConfigData)["dirname"]
+	if got := ossDir; got != "bucket_oss" {
+		t.Errorf("derived oss dirname: got %q, want %q", got, "bucket_oss")
+	}
+}
+
+func TestDerive_Provenance(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		data:   map[string]any{"x": 1},
+		source: "defaults",
+	})
+
+	k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+		return kongfig.ConfigData{"y": 2}, nil
+	})
+
+	prov := k.Provenance()
+	metas := prov.SourceMetas()
+
+	if got := metas["x"].Layer.Name; got != "defaults" {
+		t.Errorf("x provenance: got %q, want %q", got, "defaults")
+	}
+	if got := metas["y"].Layer.Name; got != "derived" {
+		t.Errorf("y provenance: got %q, want %q", got, "derived")
+	}
+}

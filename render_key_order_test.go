@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	kongfig "github.com/pmarschik/kongfig"
+	jsonparser "github.com/pmarschik/kongfig/parsers/json"
 	tomlparser "github.com/pmarschik/kongfig/parsers/toml"
 	yamlparser "github.com/pmarschik/kongfig/parsers/yaml"
 	structsprovider "github.com/pmarschik/kongfig/providers/structs"
@@ -211,6 +212,37 @@ func TestTOML_UnmarshalWithKeyOrder_Nested(t *testing.T) {
 	wantInner := []string{"y", "x"}
 	if strings.Join(order["inner"], ",") != strings.Join(wantInner, ",") {
 		t.Errorf("toml inner order: got %v, want %v", order["inner"], wantInner)
+	}
+}
+
+// --- JSON parser UnmarshalWithKeyOrder ---
+
+func TestJSON_UnmarshalWithKeyOrder(t *testing.T) {
+	input := `{"c": 1, "a": 2, "b": 3}`
+	_, order, err := jsonparser.Default.UnmarshalWithKeyOrder([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := order[""]
+	want := []string{"c", "a", "b"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("json key order: got %v, want %v", got, want)
+	}
+}
+
+func TestJSON_UnmarshalWithKeyOrder_Nested(t *testing.T) {
+	input := `{"z": 1, "inner": {"y": 2, "x": 3}, "a": 4}`
+	_, order, err := jsonparser.Default.UnmarshalWithKeyOrder([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoot := []string{"z", "inner", "a"}
+	if strings.Join(order[""], ",") != strings.Join(wantRoot, ",") {
+		t.Errorf("json root order: got %v, want %v", order[""], wantRoot)
+	}
+	wantInner := []string{"y", "x"}
+	if strings.Join(order["inner"], ",") != strings.Join(wantInner, ",") {
+		t.Errorf("json inner order: got %v, want %v", order["inner"], wantInner)
 	}
 }
 

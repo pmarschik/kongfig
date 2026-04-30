@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 
 	kongfig "github.com/pmarschik/kongfig"
@@ -38,6 +39,7 @@ var (
 	_ kongfig.Parser         = Parser{}
 	_ kongfig.ParserNamer    = Parser{}
 	_ kongfig.OutputProvider = Parser{}
+	_ kongfig.KeyOrderParser = Parser{}
 )
 
 func (p Parser) indent() string {
@@ -190,6 +192,102 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, dat
 		fmt.Fprintln(w, line)
 	}
 	return nil
+}
+
+// UnmarshalWithKeyOrder decodes JSON bytes and also returns the key insertion order
+// per parent path from the document. Implements [kongfig.KeyOrderParser].
+// Comments are stripped first when the parser is in JSONC mode.
+func (p Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]string, error) {
+	if p.Comments {
+		b = stripComments(b)
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return make(kongfig.ConfigData), nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	t, err := dec.Token()
+	if err != nil {
+		return nil, nil, fmt.Errorf("json: %w", err)
+	}
+	if d, ok := t.(json.Delim); !ok || d != '{' {
+		return nil, nil, fmt.Errorf("json: expected top-level object, got %T", t)
+	}
+	data, order, err := jsonDecodeObject(dec, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(order) == 0 {
+		order = nil
+	}
+	return data, order, nil
+}
+
+// jsonDecodeObject reads the body of a JSON object (after the opening '{' has been
+// consumed) and returns the data map plus key insertion order for all nested objects.
+func jsonDecodeObject(dec *json.Decoder, prefix string) (kongfig.ConfigData, map[string][]string, error) {
+	data := make(kongfig.ConfigData)
+	order := make(map[string][]string)
+	var keys []string
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, nil, err
+		}
+		key, ok := kt.(string)
+		if !ok {
+			return nil, nil, fmt.Errorf("json: expected string key, got %T", kt)
+		}
+		keys = append(keys, key)
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		val, childOrder, err := jsonDecodeValue(dec, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		data[key] = val
+		maps.Copy(order, childOrder)
+	}
+	if _, err := dec.Token(); err != nil { // consume '}'
+		return nil, nil, err
+	}
+	if len(keys) > 0 {
+		order[prefix] = keys
+	}
+	return data, order, nil
+}
+
+// jsonDecodeValue reads one JSON value from the decoder and returns its Go representation.
+// Nested objects are returned as [kongfig.ConfigData] with their key order captured.
+// Arrays are returned as []any; order within arrays is not tracked (elements have no string keys).
+func jsonDecodeValue(dec *json.Decoder, path string) (any, map[string][]string, error) {
+	t, err := dec.Token()
+	if err != nil {
+		return nil, nil, err
+	}
+	switch d := t.(type) {
+	case json.Delim:
+		if d == '{' {
+			return jsonDecodeObject(dec, path)
+		}
+		// array: collect elements, no key-order tracking needed
+		var elems []any
+		for dec.More() {
+			v, _, err := jsonDecodeValue(dec, path)
+			if err != nil {
+				return nil, nil, err
+			}
+			elems = append(elems, v)
+		}
+		if _, err := dec.Token(); err != nil { // consume ']'
+			return nil, nil, err
+		}
+		return elems, nil, nil
+	default:
+		// scalar: string, float64, bool, nil — matches encoding/json defaults
+		return d, nil, nil
+	}
 }
 
 // stripComments removes // line comments and /* */ block comments from JSON bytes,

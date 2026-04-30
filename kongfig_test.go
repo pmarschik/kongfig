@@ -581,16 +581,16 @@ func TestDerive_BasicOverlay(t *testing.T) {
 		source: "defaults",
 	})
 
-	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
-		name, ok := cfg["name"].(string)
+	err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		name, ok := in.Data["name"].(string)
 		if !ok {
-			return nil, errors.New("name not a string")
+			return kongfig.DeriveOutput{}, errors.New("name not a string")
 		}
-		version, ok := cfg["version"].(string)
+		version, ok := in.Data["version"].(string)
 		if !ok {
-			return nil, errors.New("version not a string")
+			return kongfig.DeriveOutput{}, errors.New("version not a string")
 		}
-		return kongfig.ConfigData{"fullname": name + " v" + version}, nil
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"fullname": name + " v" + version}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -609,16 +609,16 @@ func TestDerive_MergesWithExisting(t *testing.T) {
 		source: "defaults",
 	})
 
-	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
-		a, ok := cfg["a"].(int)
+	err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		a, ok := in.Data["a"].(int)
 		if !ok {
-			return nil, errors.New("a not an int")
+			return kongfig.DeriveOutput{}, errors.New("a not an int")
 		}
-		b, ok := cfg["b"].(int)
+		b, ok := in.Data["b"].(int)
 		if !ok {
-			return nil, errors.New("b not an int")
+			return kongfig.DeriveOutput{}, errors.New("b not an int")
 		}
-		return kongfig.ConfigData{"c": a + b}, nil
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"c": a + b}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -641,8 +641,8 @@ func TestDerive_Error(t *testing.T) {
 	})
 
 	testErr := errors.New("custom error")
-	err := k.Derive(func(_ kongfig.ConfigData) (kongfig.ConfigData, error) {
-		return nil, testErr
+	err := k.Derive(func(_ kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		return kongfig.DeriveOutput{}, testErr
 	})
 
 	if !errors.Is(err, testErr) {
@@ -671,8 +671,8 @@ func TestDerive_AddsToLayers(t *testing.T) {
 		t.Fatalf("initial layers: got %d, want 1", len(k.Layers()))
 	}
 
-	if err := k.Derive(func(_ kongfig.ConfigData) (kongfig.ConfigData, error) {
-		return kongfig.ConfigData{"y": 2}, nil
+	if err := k.Derive(func(_ kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"y": 2}}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -705,21 +705,21 @@ func TestDerive_CrossField(t *testing.T) {
 		source: "defaults",
 	})
 
-	err := k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
-		bucketsRaw := cfg["buckets"]
-		separatorsRaw := cfg["separators"]
+	err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		bucketsRaw := in.Data["buckets"]
+		separatorsRaw := in.Data["separators"]
 		if bucketsRaw == nil || separatorsRaw == nil {
-			return nil, errors.New("missing buckets or separators")
+			return kongfig.DeriveOutput{}, errors.New("missing buckets or separators")
 		}
 
 		buckets, ok1 := bucketsRaw.(kongfig.ConfigData)
 		separators, ok2 := separatorsRaw.(kongfig.ConfigData)
 		if !ok1 || !ok2 {
-			return nil, errors.New("unexpected types in config")
+			return kongfig.DeriveOutput{}, errors.New("unexpected types in config")
 		}
 		prefix, ok3 := separators["bucket_prefix"].(string)
 		if !ok3 {
-			return nil, errors.New("bucket_prefix not a string")
+			return kongfig.DeriveOutput{}, errors.New("bucket_prefix not a string")
 		}
 
 		// Return overlay that adds dirname to each bucket
@@ -729,7 +729,7 @@ func TestDerive_CrossField(t *testing.T) {
 			bucketsOverlay[k] = kongfig.ConfigData{"dirname": prefix + k}
 		}
 		derived["buckets"] = bucketsOverlay
-		return derived, nil
+		return kongfig.DeriveOutput{Data: derived}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -756,8 +756,8 @@ func TestDerive_Provenance(t *testing.T) {
 		source: "defaults",
 	})
 
-	if err := k.Derive(func(_ kongfig.ConfigData) (kongfig.ConfigData, error) {
-		return kongfig.ConfigData{"y": 2}, nil
+	if err := k.Derive(func(_ kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"y": 2}}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -770,5 +770,31 @@ func TestDerive_Provenance(t *testing.T) {
 	}
 	if got := metas["y"].Layer.Name; got != "derived" {
 		t.Errorf("y provenance: got %q, want %q", got, "derived")
+	}
+}
+
+func TestDerive_ProvenanceInFn(t *testing.T) {
+	// Verify that the provenance passed to DeriveFn reflects the pre-derive state.
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{data: map[string]any{"x": 1}, source: "env.test"})
+	mustLoad(t, k, &staticProvider{data: map[string]any{"y": 2}, source: "file"})
+
+	var capturedProv *kongfig.Provenance
+	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		capturedProv = in.Provenance
+		return kongfig.DeriveOutput{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if capturedProv == nil {
+		t.Fatal("provenance was nil inside DeriveFn")
+	}
+	metas := capturedProv.SourceMetas()
+	if got := metas["x"].Layer.Name; got != "env.test" {
+		t.Errorf("x source: want %q, got %q", "env.test", got)
+	}
+	if got := metas["y"].Layer.Name; got != "file" {
+		t.Errorf("y source: want %q, got %q", "file", got)
 	}
 }

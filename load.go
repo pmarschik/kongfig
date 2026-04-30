@@ -278,46 +278,62 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 	return nil
 }
 
+// DeriveInput is passed to [DeriveFn] by [Kongfig.Derive].
+// Additional fields may be added in future minor versions.
+type DeriveInput struct {
+	Data       ConfigData
+	Provenance *Provenance
+}
+
+// DeriveOutput is returned by [DeriveFn].
+// Additional fields may be added in future minor versions.
+type DeriveOutput struct {
+	Data ConfigData
+}
+
 // DeriveFn is the signature for functions passed to [Kongfig.Derive].
-// It receives the current merged configuration and returns overlay data to be merged
-// with a "derived" source label. Returning an error aborts the derive operation.
-type DeriveFn func(ConfigData) (ConfigData, error)
+// It receives the current merged configuration and provenance, and returns overlay
+// data to be merged with a "derived" source label.
+// Returning an error aborts the derive operation.
+type DeriveFn func(DeriveInput) (DeriveOutput, error)
 
 // Derive applies a user-supplied function to the current merged state and merges
 // the result back with a "derived" source label.
 //
 // This is a post-load operation for computing values that depend on multiple config
-// fields. The function receives the full merged ConfigData (all providers applied),
-// computes overlay data, and returns it; Kongfig merges it as a new layer.
+// fields. The function receives the full merged ConfigData and its provenance
+// (all providers applied), computes overlay data, and returns it; Kongfig merges
+// it as a new layer.
 //
 // Use this after all providers are loaded:
 //
 //	k.MustLoad(ctx, provider1)
 //	k.MustLoad(ctx, provider2)
-//	k.MustLoad(ctx, k.Derive(func(cfg kongfig.ConfigData) (kongfig.ConfigData, error) {
+//	k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
 //	    // example: compute normalized bucket dirnames from map keys and separators
 //	    result := make(kongfig.ConfigData)
-//	    buckets := cfg["buckets"].(kongfig.ConfigData)
+//	    buckets := in.Data["buckets"].(kongfig.ConfigData)
 //	    for k := range buckets {
-//	        result[k] = normalize(k, cfg["separators"]) // your logic
+//	        result[k] = normalize(k, in.Data["separators"]) // your logic
 //	    }
-//	    return result, nil
-//	}))
+//	    return kongfig.DeriveOutput{Data: result}, nil
+//	})
 //
 // Errors from fn cause Derive to return that error without modifying the Kongfig state.
 func (k *Kongfig) Derive(fn DeriveFn) error {
 	k.mu.RLock()
 	current := k.data.Clone()
+	prov := k.prov.clone()
 	k.mu.RUnlock()
 
-	// Call the derive function with the current merged state.
-	data, err := fn(current)
+	// Call the derive function with the current merged state and provenance.
+	out, err := fn(DeriveInput{Data: current, Provenance: prov})
 	if err != nil {
 		return err
 	}
 
 	// Normalize the result (same normalization as Load does).
-	data = normalizeConfigData(data)
+	data := normalizeConfigData(out.Data)
 
 	// Build LayerMeta with "derived" source label and kind.
 	lm := LayerMeta{

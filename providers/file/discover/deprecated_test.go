@@ -38,7 +38,7 @@ func TestDeprecated_FiresLegacyFileEvent(t *testing.T) {
 	inner := &recordingDiscoverer{name: "xdg", path: "/old/config.yaml"}
 	var got kongfig.MigrationEvent
 	policy := kongfig.MigrationPolicy{
-		OnFirst: func(e kongfig.MigrationEvent) error { got = e; return nil },
+		OnFirst: func(e kongfig.MigrationEvent) kongfig.MigrationResult { got = e; return kongfig.MigrationResult{} },
 	}
 
 	wrapped := discover.Deprecated(inner, "/new/config.yaml", policy)
@@ -73,7 +73,7 @@ func TestDeprecated_NoFileFound_NoEvent(t *testing.T) {
 	inner := &recordingDiscoverer{name: "xdg", path: ""} // returns empty = not found
 	var called bool
 	wrapped := discover.Deprecated(inner, "/new/config.yaml", kongfig.MigrationPolicy{
-		OnFirst: func(kongfig.MigrationEvent) error { called = true; return nil },
+		OnFirst: func(kongfig.MigrationEvent) kongfig.MigrationResult { called = true; return kongfig.MigrationResult{} },
 	})
 
 	path, err := wrapped.Discover(context.Background(), []string{".yaml"})
@@ -103,11 +103,11 @@ func TestDeprecated_MigrationFail_PropagatesError(t *testing.T) {
 func TestDeprecated_OccurrenceTracking(t *testing.T) {
 	inner := &recordingDiscoverer{name: "workdir", path: "/old.yaml"}
 	var occs []int
-	appendOcc := func(e kongfig.MigrationEvent) error {
+	appendOcc := func(e kongfig.MigrationEvent) kongfig.MigrationResult {
 		if ev, ok := e.(kongfig.LegacyFileEvent); ok {
 			occs = append(occs, ev.Occurrence)
 		}
-		return nil
+		return kongfig.MigrationResult{}
 	}
 	wrapped := discover.Deprecated(inner, "/new.yaml", kongfig.MigrationPolicy{OnFirst: appendOcc, OnRepeat: appendOcc})
 

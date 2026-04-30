@@ -2,6 +2,7 @@ package kongfig_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestAddRename_AbsentKey_NoOp(t *testing.T) {
 	k := newKongfigForMigrate()
 	var called bool
 	k.AddRename("old.host", "new.host", kongfig.MigrationPolicy{
-		OnFirst: func(kongfig.MigrationEvent) error { called = true; return nil },
+		OnFirst: func(kongfig.MigrationEvent) kongfig.MigrationResult { called = true; return kongfig.MigrationResult{} },
 	})
 
 	if err := loadData(t, k, map[string]any{"other": "val"}, "test"); err != nil {
@@ -38,7 +39,7 @@ func TestAddRename_MovesValue(t *testing.T) {
 	k := newKongfigForMigrate()
 	var got kongfig.MigrationEvent
 	k.AddRename("db.host", "database.host", kongfig.MigrationPolicy{
-		OnFirst: func(e kongfig.MigrationEvent) error { got = e; return nil },
+		OnFirst: func(e kongfig.MigrationEvent) kongfig.MigrationResult { got = e; return kongfig.MigrationResult{} },
 	})
 
 	if err := loadData(t, k, map[string]any{"db": map[string]any{"host": "localhost"}}, "file"); err != nil {
@@ -76,7 +77,7 @@ func TestAddRename_Conflict_DropsOld(t *testing.T) {
 	k := newKongfigForMigrate()
 	var got kongfig.MigrationEvent
 	k.AddRename("old", "new", kongfig.MigrationPolicy{
-		OnFirst: func(e kongfig.MigrationEvent) error { got = e; return nil },
+		OnFirst: func(e kongfig.MigrationEvent) kongfig.MigrationResult { got = e; return kongfig.MigrationResult{} },
 	})
 
 	if err := loadData(t, k, map[string]any{"old": "old-val", "new": "new-val"}, "file"); err != nil {
@@ -103,11 +104,11 @@ func TestAddRename_Conflict_DropsOld(t *testing.T) {
 func TestAddRename_OccurrenceTracking(t *testing.T) {
 	k := newKongfigForMigrate()
 	var occs []int
-	appendOcc := func(e kongfig.MigrationEvent) error {
+	appendOcc := func(e kongfig.MigrationEvent) kongfig.MigrationResult {
 		if ev, ok := e.(kongfig.RenameEvent); ok {
 			occs = append(occs, ev.Occurrence)
 		}
-		return nil
+		return kongfig.MigrationResult{}
 	}
 	policy := kongfig.MigrationPolicy{OnFirst: appendOcc, OnRepeat: appendOcc}
 	k.AddRename("old", "new", policy)
@@ -175,6 +176,104 @@ func TestAddRename_MultipleRenames(t *testing.T) {
 	}
 	if v, _ := all.LookupPath("y"); v != 2 {
 		t.Errorf("y should be 2, got %v", v)
+	}
+}
+
+// ── MigrationWarnResult / warning accumulation ───────────────────────────────
+
+func TestMigrationWarnResult_NonFatal(t *testing.T) {
+	k := newKongfigForMigrate()
+	k.AddRename("old", "new", kongfig.MigrationPolicy{OnFirst: kongfig.MigrationWarnResult})
+
+	if err := loadData(t, k, map[string]any{"old": "v"}, "test"); err != nil {
+		t.Fatalf("MigrationWarnResult must not fail Load: %v", err)
+	}
+}
+
+func TestMigrationWarnResult_AccumulatesWarning(t *testing.T) {
+	k := newKongfigForMigrate()
+	k.AddRename("old.key", "new.key", kongfig.MigrationPolicy{OnFirst: kongfig.MigrationWarnResult})
+
+	if err := loadData(t, k, map[string]any{"old": map[string]any{"key": "v"}}, "myfile"); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := k.MigrationWarnings()
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	for _, want := range []string{"old.key", "new.key", "myfile"} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("warning should mention %q; got: %s", want, warnings[0])
+		}
+	}
+}
+
+func TestMigrationWarnings_AccumulatesAcrossLoads(t *testing.T) {
+	k := newKongfigForMigrate()
+	k.AddRename("old", "new", kongfig.MigrationPolicy{
+		OnFirst:  kongfig.MigrationWarnResult,
+		OnRepeat: kongfig.MigrationWarnResult,
+	})
+
+	for range 3 {
+		if err := loadData(t, k, map[string]any{"old": "v"}, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := len(k.MigrationWarnings()); got != 3 {
+		t.Errorf("expected 3 warnings, got %d", got)
+	}
+}
+
+func TestClearMigrationWarnings(t *testing.T) {
+	k := newKongfigForMigrate()
+	k.AddRename("old", "new", kongfig.MigrationPolicy{OnFirst: kongfig.MigrationWarnResult})
+
+	if err := loadData(t, k, map[string]any{"old": "v"}, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	k.ClearMigrationWarnings()
+	if got := k.MigrationWarnings(); len(got) != 0 {
+		t.Errorf("expected empty after clear, got %v", got)
+	}
+}
+
+func TestMigrationWarnings_EmptyByDefault(t *testing.T) {
+	k := newKongfigForMigrate()
+	if got := k.MigrationWarnings(); got != nil {
+		t.Errorf("expected nil before any load, got %v", got)
+	}
+}
+
+func TestMigrationWarnResult_NoWarning_WhenKeyAbsent(t *testing.T) {
+	k := newKongfigForMigrate()
+	k.AddRename("old", "new", kongfig.MigrationPolicy{OnFirst: kongfig.MigrationWarnResult})
+
+	if err := loadData(t, k, map[string]any{"other": "v"}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := k.MigrationWarnings(); len(got) != 0 {
+		t.Errorf("expected no warnings when old key absent, got %v", got)
+	}
+}
+
+func TestMigrationWarnings_NotAccumulated_OnFailedLoad(t *testing.T) {
+	k := newKongfigForMigrate()
+	// OnFirst fails the load; warning should NOT be accumulated since Err takes precedence.
+	k.AddRename("old", "new", kongfig.MigrationPolicy{
+		OnFirst: func(kongfig.MigrationEvent) kongfig.MigrationResult {
+			return kongfig.MigrationResult{Err: errors.New("forced fail")}
+		},
+	})
+
+	if err := loadData(t, k, map[string]any{"old": "v"}, "test"); err == nil {
+		t.Fatal("expected error from failing handler")
+	}
+	if got := k.MigrationWarnings(); len(got) != 0 {
+		t.Errorf("expected no warnings on failed load, got %v", got)
 	}
 }
 

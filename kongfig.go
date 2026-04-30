@@ -57,11 +57,12 @@ type hookState struct {
 
 // cfgState groups configuration that governs how data is processed.
 type cfgState struct {
-	pathMeta    map[any]any
-	codecs      *CodecRegistry
-	mergeFuncs  map[string]MergeFunc
-	configPaths []schema.ConfigPathEntry
-	renames     []*renameEntry
+	pathMeta          map[any]any
+	codecs            *CodecRegistry
+	mergeFuncs        map[string]MergeFunc
+	configPaths       []schema.ConfigPathEntry
+	renames           []*renameEntry
+	migrationWarnings []string
 }
 
 // Kongfig is a layered configuration container.

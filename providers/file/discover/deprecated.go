@@ -69,8 +69,10 @@ func (d *deprecatedDiscoverer) Discover(ctx context.Context, exts []string) (str
 		h = d.policy.OnFirst
 	}
 	if h != nil {
-		if hErr := h(event); hErr != nil {
-			return "", hErr
+		// MigrationResult.Warning is silently dropped here: discoverers run before
+		// a Kongfig instance is available, so there is no target to accumulate into.
+		if r := h(event); r.Err != nil {
+			return "", r.Err
 		}
 	}
 

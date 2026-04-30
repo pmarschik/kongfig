@@ -221,8 +221,9 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 	data = normalizeConfigData(data)
 
 	// Apply registered key renames / deprecation migrations.
+	var renameWarnings []string
 	var renameErr error
-	data, renameErr = k.applyRenames(data, source, "")
+	data, renameWarnings, renameErr = k.applyRenames(data, source, "")
 	if renameErr != nil {
 		return renameErr
 	}
@@ -266,11 +267,12 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 		return errors.Join(errs...)
 	}
 
-	// All hooks passed: commit proposed state.
+	// All hooks passed: commit proposed state and any non-fatal migration warnings.
 	k.mu.Lock()
 	k.data = proposed
 	k.prov = proposedProv
 	k.layers = append(k.layers, layer)
+	k.cfg.migrationWarnings = append(k.cfg.migrationWarnings, renameWarnings...)
 	k.mu.Unlock()
 
 	return nil

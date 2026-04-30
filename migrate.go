@@ -58,36 +58,57 @@ func (LegacyFileEvent) migrationEvent() {}
 
 // ── Handler and built-ins ──────────────────────────────────────────────────────
 
+// MigrationResult is returned by MigrationFunc.
+// A non-nil Err causes Load to fail; a non-empty Warning is non-fatal and
+// accumulated in the Kongfig instance — retrieve with [Kongfig.MigrationWarnings].
+// If both are set the error takes precedence and the Warning is discarded.
+type MigrationResult struct {
+	Err     error
+	Warning string
+}
+
 // MigrationFunc is called when a migration condition fires during Load.
-// Return a non-nil error to cause Load to fail.
-type MigrationFunc func(MigrationEvent) error
+// Return a non-nil Err to cause Load to fail; set Warning for a non-fatal diagnostic.
+type MigrationFunc func(MigrationEvent) MigrationResult
 
 // Built-in MigrationFunc values for common behaviors.
 var (
 	// MigrationSilent does nothing — suppress without logging.
-	MigrationSilent MigrationFunc = func(MigrationEvent) error { return nil }
+	MigrationSilent MigrationFunc = func(MigrationEvent) MigrationResult { return MigrationResult{} }
 
 	// MigrationDebug logs at slog.LevelDebug via slog.Default().
-	MigrationDebug MigrationFunc = func(e MigrationEvent) error {
+	MigrationDebug MigrationFunc = func(e MigrationEvent) MigrationResult {
 		logMigration(slog.Default(), slog.LevelDebug, e)
-		return nil
+		return MigrationResult{}
 	}
 
 	// MigrationInfo logs at slog.LevelInfo via slog.Default().
-	MigrationInfo MigrationFunc = func(e MigrationEvent) error {
+	MigrationInfo MigrationFunc = func(e MigrationEvent) MigrationResult {
 		logMigration(slog.Default(), slog.LevelInfo, e)
-		return nil
+		return MigrationResult{}
 	}
 
 	// MigrationWarn logs at slog.LevelWarn via slog.Default().
-	MigrationWarn MigrationFunc = func(e MigrationEvent) error {
+	MigrationWarn MigrationFunc = func(e MigrationEvent) MigrationResult {
 		logMigration(slog.Default(), slog.LevelWarn, e)
-		return nil
+		return MigrationResult{}
 	}
 
 	// MigrationFail returns an error, causing Load to fail.
 	// Use to enforce migration at startup.
-	MigrationFail MigrationFunc = migrationError
+	MigrationFail MigrationFunc = func(e MigrationEvent) MigrationResult {
+		return MigrationResult{Err: migrationError(e)}
+	}
+
+	// MigrationWarnResult returns a non-fatal warning that is accumulated in the
+	// Kongfig instance without logging or failing the load.
+	// Use [Kongfig.MigrationWarnings] to retrieve them after loading.
+	//
+	// Note: when used with [discover.Deprecated], warnings are silently dropped
+	// because discoverers run before the Kongfig instance is available.
+	MigrationWarnResult MigrationFunc = func(e MigrationEvent) MigrationResult {
+		return MigrationResult{Warning: migrationMessage(e)}
+	}
 )
 
 func logMigration(logger *slog.Logger, level slog.Level, e MigrationEvent) {
@@ -105,16 +126,20 @@ func logMigration(logger *slog.Logger, level slog.Level, e MigrationEvent) {
 	}
 }
 
-func migrationError(e MigrationEvent) error {
+func migrationMessage(e MigrationEvent) string {
 	switch ev := e.(type) {
 	case RenameEvent:
-		return fmt.Errorf("deprecated config key %q: rename to %q (source: %s)", ev.OldPath, ev.NewPath, ev.SourceName)
+		return fmt.Sprintf("deprecated config key %q: rename to %q (source: %s)", ev.OldPath, ev.NewPath, ev.SourceName)
 	case ConflictEvent:
-		return fmt.Errorf("config key conflict: both %q and %q present in %s; remove the old key", ev.OldPath, ev.NewPath, ev.SourceName)
+		return fmt.Sprintf("config key conflict: both %q and %q present in %s; remove the old key", ev.OldPath, ev.NewPath, ev.SourceName)
 	case LegacyFileEvent:
-		return fmt.Errorf("deprecated config file %q found; migrate to: %s", ev.FilePath, ev.PreferredPath)
+		return fmt.Sprintf("deprecated config file %q found; migrate to: %s", ev.FilePath, ev.PreferredPath)
 	}
-	return fmt.Errorf("migration: unexpected event type %T", e)
+	return fmt.Sprintf("migration: unexpected event type %T", e)
+}
+
+func migrationError(e MigrationEvent) error {
+	return errors.New(migrationMessage(e))
 }
 
 // ── Policy ─────────────────────────────────────────────────────────────────────
@@ -143,7 +168,7 @@ type renameEntry struct {
 }
 
 // dispatch increments the occurrence counter and fires the appropriate handler.
-func (r *renameEntry) dispatch(e MigrationEvent) error {
+func (r *renameEntry) dispatch(e MigrationEvent) MigrationResult {
 	r.mu.Lock()
 	r.seen++
 	occ := r.seen
@@ -163,9 +188,32 @@ func (r *renameEntry) dispatch(e MigrationEvent) error {
 		h = r.policy.OnFirst
 	}
 	if h == nil {
-		return nil
+		return MigrationResult{}
 	}
 	return h(e)
+}
+
+// ── Warning accessors ──────────────────────────────────────────────────────────
+
+// MigrationWarnings returns all non-fatal migration warnings accumulated across
+// Load calls since creation or the last [ClearMigrationWarnings] call.
+// Warnings are only added when a load completes successfully.
+func (k *Kongfig) MigrationWarnings() []string {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	if len(k.cfg.migrationWarnings) == 0 {
+		return nil
+	}
+	out := make([]string, len(k.cfg.migrationWarnings))
+	copy(out, k.cfg.migrationWarnings)
+	return out
+}
+
+// ClearMigrationWarnings discards all accumulated migration warnings.
+func (k *Kongfig) ClearMigrationWarnings() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.cfg.migrationWarnings = nil
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -192,17 +240,19 @@ func (k *Kongfig) AddRename(oldPath, newPath string, policy ...MigrationPolicy) 
 
 // applyRenames applies all registered renames to incoming layer data.
 // All renames are attempted; errors are collected and joined.
-func (k *Kongfig) applyRenames(data ConfigData, sourceName, sourceFile string) (ConfigData, error) {
+// Warnings (non-fatal results) are returned separately for the caller to accumulate.
+func (k *Kongfig) applyRenames(data ConfigData, sourceName, sourceFile string) (ConfigData, []string, error) {
 	k.mu.RLock()
 	renames := make([]*renameEntry, len(k.cfg.renames))
 	copy(renames, k.cfg.renames)
 	k.mu.RUnlock()
 
 	if len(renames) == 0 {
-		return data, nil
+		return data, nil, nil
 	}
 
 	var errs []error
+	var warnings []string
 	for _, r := range renames {
 		oldVal, oldExists := data.LookupPath(r.old)
 		if !oldExists {
@@ -226,12 +276,15 @@ func (k *Kongfig) applyRenames(data ConfigData, sourceName, sourceFile string) (
 			}
 		}
 
-		if err := r.dispatch(event); err != nil {
-			errs = append(errs, err)
+		res := r.dispatch(event)
+		if res.Err != nil {
+			errs = append(errs, res.Err)
+		} else if res.Warning != "" {
+			warnings = append(warnings, res.Warning)
 		}
 	}
 
-	return data, errors.Join(errs...)
+	return data, warnings, errors.Join(errs...)
 }
 
 // deleteNestedPath removes the value at the dot-delimited path from a clone of d.

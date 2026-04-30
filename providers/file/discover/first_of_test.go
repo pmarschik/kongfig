@@ -2,6 +2,7 @@ package discover_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -221,4 +222,12 @@ func staticDirs(dir string) discover.DirProvider {
 	return func(_ context.Context) ([]discover.DirEntry, error) {
 		return []discover.DirEntry{{Path: dir, Short: "$test", Long: "$test"}}, nil
 	}
+}
+
+// errorDiscoverer is a fake that always returns an error from Discover.
+type errorDiscoverer struct{}
+
+func (*errorDiscoverer) Name() string { return "error" }
+func (*errorDiscoverer) Discover(_ context.Context, _ []string) (string, error) {
+	return "", errors.New("discover error")
 }

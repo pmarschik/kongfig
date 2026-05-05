@@ -171,7 +171,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 			}
 			fmt.Fprintf(w, "%s = [\n", s.Key(k))
 			for _, elem := range toTOMLSlice(leafVal) {
-				fmt.Fprintf(w, "  %s,\n", tomlValue(elem))
+				fmt.Fprintf(w, "  %s,\n", tomlValueStyled(s, elem))
 			}
 			fmt.Fprintln(w, "]")
 			continue
@@ -305,6 +305,77 @@ func tomlInlineTable(m map[string]any) string {
 	pairs := make([]string, len(keys))
 	for i, k := range keys {
 		pairs[i] = k + " = " + tomlValue(m[k])
+	}
+	return "{" + strings.Join(pairs, ", ") + "}"
+}
+
+// tomlValueStyled formats a value for TOML output with Styler-applied coloring.
+// Used for elements in multiline arrays where keys and values can be individually styled.
+func tomlValueStyled(s kongfig.Styler, v any) string { //nolint:cyclop // mirrors tomlValue type dispatch, intentional
+	if v == nil {
+		return s.Null("nil")
+	}
+	switch val := v.(type) {
+	case string:
+		return s.String(fmt.Sprintf("%q", val))
+	case bool:
+		if val {
+			return s.Bool("true")
+		}
+		return s.Bool("false")
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return s.Number(fmt.Sprintf("%v", val))
+	case kongfig.ConfigData:
+		return tomlInlineTableStyled(s, map[string]any(val))
+	case map[string]any:
+		return tomlInlineTableStyled(s, val)
+	case []any:
+		return tomlArrayStyled(s, val)
+	case []string:
+		out := make([]any, len(val))
+		for i, sv := range val {
+			out[i] = sv
+		}
+		return tomlArrayStyled(s, out)
+	default:
+		rv := reflect.ValueOf(val)
+		switch rv.Kind() { //nolint:exhaustive // only slice/map/struct need special treatment
+		case reflect.Slice:
+			return tomlArrayStyled(s, toTOMLSlice(val))
+		case reflect.Map, reflect.Struct:
+			var buf bytes.Buffer
+			if err := toml.NewEncoder(&buf).Encode(val); err == nil {
+				var m map[string]any
+				if _, err = toml.Decode(buf.String(), &m); err == nil {
+					return tomlInlineTableStyled(s, m)
+				}
+			}
+		}
+		return s.String(fmt.Sprintf("%q", strings.TrimSpace(fmt.Sprintf("%v", val))))
+	}
+}
+
+// tomlArrayStyled formats a slice as a TOML inline array with styled values.
+func tomlArrayStyled(s kongfig.Styler, vals []any) string {
+	parts := make([]string, len(vals))
+	for i, v := range vals {
+		parts[i] = tomlValueStyled(s, v)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// tomlInlineTableStyled formats a map as a TOML inline table with s.Key() applied to keys.
+func tomlInlineTableStyled(s kongfig.Styler, m map[string]any) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, len(keys))
+	for i, k := range keys {
+		pairs[i] = s.Key(k) + " = " + tomlValueStyled(s, m[k])
 	}
 	return "{" + strings.Join(pairs, ", ") + "}"
 }

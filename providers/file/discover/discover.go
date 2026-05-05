@@ -67,8 +67,13 @@ func ExecDir() *compositeDiscoverer { //nolint:revive // returning concrete type
 	return Compose("execdir", ExecDirs(), LocateFirst(LocateAppFlat(), LocateConfigBase()))
 }
 
-// gitRootDiscoverer searches the git repository root by walking up the filesystem.
-type gitRootDiscoverer struct {
+// vcsRootDiscoverer searches a VCS repository root by walking up the filesystem.
+// Shared implementation for git and Jujutsu; instantiated via [GitRoot] and [JujutsuRoot].
+type vcsRootDiscoverer struct {
+	marker   string // VCS marker directory/file to search for (e.g. ".git", ".jj")
+	name     string // discoverer name (e.g. "git-root", "jj-root")
+	short    string // short display label (e.g. "$git-root", "$jj-root")
+	long     string // long display label (e.g. "(git root)", "(jj root)")
 	startDir string // override for os.Getwd(); set via FromDir
 	maxDepth int
 }
@@ -77,84 +82,20 @@ type gitRootDiscoverer struct {
 // It walks up from the current directory looking for a .git entry (directory or file).
 // Returns ("", nil) if not inside a git repository within maxDepth parent directories.
 // maxDepth <= 0 uses the default (20).
-func GitRoot(maxDepth ...int) *gitRootDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
-	d := &gitRootDiscoverer{}
+func GitRoot(maxDepth ...int) *vcsRootDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+	d := &vcsRootDiscoverer{marker: ".git", name: "git-root", short: "$git-root", long: "(git root)"}
 	if len(maxDepth) > 0 {
 		d.maxDepth = maxDepth[0]
 	}
 	return d
-}
-
-// FromDir overrides the starting directory for the upward search.
-// By default os.Getwd() is used.
-func (d *gitRootDiscoverer) FromDir(dir string) *gitRootDiscoverer {
-	d.startDir = dir
-	return d
-}
-
-// MaxDepth sets the maximum number of parent directories to walk.
-func (d *gitRootDiscoverer) MaxDepth(n int) *gitRootDiscoverer {
-	d.maxDepth = n
-	return d
-}
-
-func (*gitRootDiscoverer) Name() string { return "git-root" }
-
-func (d *gitRootDiscoverer) wd() (string, error) {
-	if d.startDir != "" {
-		return d.startDir, nil
-	}
-	return os.Getwd()
-}
-
-func (d *gitRootDiscoverer) dirEntries(_ context.Context) ([]DirEntry, error) {
-	wd, err := d.wd()
-	if err != nil {
-		return nil, err
-	}
-	root := findVCSRoot(wd, ".git", d.maxDepth)
-	if root == "" {
-		return nil, nil
-	}
-	return []DirEntry{{root, "$git-root", "(git root)"}}, nil
-}
-
-func (d *gitRootDiscoverer) Discover(ctx context.Context, exts []string) (string, error) {
-	entries, err := d.dirEntries(ctx)
-	if err != nil {
-		return "", err
-	}
-	loc := LocateConfigBase()
-	for _, entry := range entries {
-		if p := loc(ctx, entry.Path, exts); p != "" {
-			return p, nil
-		}
-	}
-	return "", nil
-}
-
-// DisplayPath formats the found path relative to the git repository root.
-// Short mode (default): returns "$git-root". Long mode ([WithLongDisplayPaths]): returns the relative path.
-func (d *gitRootDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
-	entries, err := d.dirEntries(ctx)
-	if err != nil {
-		return ""
-	}
-	return displayPathFromEntries(ctx, entries, foundPath)
-}
-
-// jujutsuRootDiscoverer searches the Jujutsu repository root by walking up the filesystem.
-type jujutsuRootDiscoverer struct {
-	startDir string // override for os.Getwd(); set via FromDir
-	maxDepth int
 }
 
 // JujutsuRoot returns a Discoverer that searches <jj-root>/config.<ext>.
 // It walks up from the current directory looking for a .jj directory.
 // Returns ("", nil) if not inside a Jujutsu repository within maxDepth parent directories.
 // maxDepth <= 0 uses the default (20).
-func JujutsuRoot(maxDepth ...int) *jujutsuRootDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
-	d := &jujutsuRootDiscoverer{}
+func JujutsuRoot(maxDepth ...int) *vcsRootDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+	d := &vcsRootDiscoverer{marker: ".jj", name: "jj-root", short: "$jj-root", long: "(jj root)"}
 	if len(maxDepth) > 0 {
 		d.maxDepth = maxDepth[0]
 	}
@@ -163,39 +104,39 @@ func JujutsuRoot(maxDepth ...int) *jujutsuRootDiscoverer { //nolint:revive // re
 
 // FromDir overrides the starting directory for the upward search.
 // By default os.Getwd() is used.
-func (d *jujutsuRootDiscoverer) FromDir(dir string) *jujutsuRootDiscoverer {
+func (d *vcsRootDiscoverer) FromDir(dir string) *vcsRootDiscoverer {
 	d.startDir = dir
 	return d
 }
 
 // MaxDepth sets the maximum number of parent directories to walk.
-func (d *jujutsuRootDiscoverer) MaxDepth(n int) *jujutsuRootDiscoverer {
+func (d *vcsRootDiscoverer) MaxDepth(n int) *vcsRootDiscoverer {
 	d.maxDepth = n
 	return d
 }
 
-func (*jujutsuRootDiscoverer) Name() string { return "jj-root" }
+func (d *vcsRootDiscoverer) Name() string { return d.name }
 
-func (d *jujutsuRootDiscoverer) wd() (string, error) {
+func (d *vcsRootDiscoverer) wd() (string, error) {
 	if d.startDir != "" {
 		return d.startDir, nil
 	}
 	return os.Getwd()
 }
 
-func (d *jujutsuRootDiscoverer) dirEntries(_ context.Context) ([]DirEntry, error) {
+func (d *vcsRootDiscoverer) dirEntries(_ context.Context) ([]DirEntry, error) {
 	wd, err := d.wd()
 	if err != nil {
 		return nil, err
 	}
-	root := findVCSRoot(wd, ".jj", d.maxDepth)
+	root := findVCSRoot(wd, d.marker, d.maxDepth)
 	if root == "" {
 		return nil, nil
 	}
-	return []DirEntry{{root, "$jj-root", "(jj root)"}}, nil
+	return []DirEntry{{root, d.short, d.long}}, nil
 }
 
-func (d *jujutsuRootDiscoverer) Discover(ctx context.Context, exts []string) (string, error) {
+func (d *vcsRootDiscoverer) Discover(ctx context.Context, exts []string) (string, error) {
 	entries, err := d.dirEntries(ctx)
 	if err != nil {
 		return "", err
@@ -209,9 +150,9 @@ func (d *jujutsuRootDiscoverer) Discover(ctx context.Context, exts []string) (st
 	return "", nil
 }
 
-// DisplayPath formats the found path relative to the Jujutsu repository root.
-// Short mode (default): returns "$jj-root". Long mode ([WithLongDisplayPaths]): returns the relative path.
-func (d *jujutsuRootDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
+// DisplayPath formats the found path relative to the VCS repository root.
+// Short mode (default): returns the short label (e.g. "$git-root"). Long mode ([WithLongDisplayPaths]): returns the relative path.
+func (d *vcsRootDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
 	entries, err := d.dirEntries(ctx)
 	if err != nil {
 		return ""

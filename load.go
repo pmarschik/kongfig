@@ -361,14 +361,18 @@ func (k *Kongfig) Derive(fn DeriveFn) error {
 	sm := SourceMeta{Layer: lm}
 
 	// Merge derived data into the current state.
-	// Prune keys whose value equals the existing state so that only genuinely
-	// new or changed keys get "derived" provenance in the merged view.
+	// Use a disposable provenance clone so mergeFrom can run merge funcs normally
+	// (which require the full value to be present), then stamp real provenance only
+	// for the paths that actually changed (appeared in delta).
 	k.mu.Lock()
 	proposed := k.data.Clone()
 	proposedProv := k.prov.clone()
-	data = pruneUnchanged(data, proposed, k.cfg.mergeFuncs, "")
+	disposableProv := k.prov.clone()
 	delta := make(ConfigData)
-	proposed.mergeFrom(data, sm, proposedProv, k.cfg.mergeFuncs, delta, "")
+	proposed.mergeFrom(data, sm, disposableProv, k.cfg.mergeFuncs, delta, "")
+	for path := range delta {
+		proposedProv.Set(path, sm)
+	}
 	layer := Layer{Meta: lm, Data: unflattenDelta(delta), Parser: nil, KeyOrder: nil}
 	k.mu.Unlock()
 

@@ -873,13 +873,14 @@ func TestDeriveLoad_EmptyProviders_NoOp(t *testing.T) {
 	}
 }
 
-// TestDerive_PruneUnchanged_SafeWithReplaceMergeFunc is a regression test for the
-// interaction between pruneUnchanged and replace-style MergeFuncs.
+// TestDerive_ReplaceMergeFunc_PreservesUnchangedSubFields is a regression test for
+// Derive with a replace-style MergeFunc.
 //
-// Before the fix: pruneUnchanged would strip sub-fields of a replace-path that were
-// unchanged, then the replace MergeFunc would fire on the pruned overlay — silently
-// dropping the stripped fields from k.data.
-func TestDerive_PruneUnchanged_SafeWithReplaceMergeFunc(t *testing.T) {
+// Before the fix: Derive pre-pruned unchanged sub-fields before mergeFrom, so the
+// replace func would fire on the stripped overlay — silently dropping those fields.
+// Fixed by using a disposable provenance clone: mergeFrom runs on the full data,
+// then real provenance is stamped only from delta keys.
+func TestDerive_ReplaceMergeFunc_PreservesUnchangedSubFields(t *testing.T) {
 	k := kongfig.New()
 
 	// Replace-style merge func: the whole value at "roots" is replaced by the overlay.
@@ -899,8 +900,8 @@ func TestDerive_PruneUnchanged_SafeWithReplaceMergeFunc(t *testing.T) {
 	})
 
 	// Derive normalises buckets but leaves path unchanged.
-	// Without the fix, pruneUnchanged strips "path" (same value) and the replace
-	// func installs {env: {buckets: ...}} without path — silently losing it.
+	// Without the fix, path (same value as base) was pre-pruned before mergeFrom, so
+	// the replace func installed {env: {buckets: ...}} without path — silently losing it.
 	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
 		roots, ok1 := in.Data["roots"].(kongfig.ConfigData)
 		env, ok2 := roots["env"].(kongfig.ConfigData)
@@ -921,7 +922,7 @@ func TestDerive_PruneUnchanged_SafeWithReplaceMergeFunc(t *testing.T) {
 
 	flat := k.All().FlatValues()
 	if _, ok := flat["roots.env.path"]; !ok {
-		t.Error("roots.env.path lost after Derive with replace MergeFunc — pruneUnchanged must not strip merge-func paths")
+		t.Error("roots.env.path lost after Derive with replace MergeFunc")
 	}
 	if _, ok := flat["roots.env.buckets.b"]; !ok {
 		t.Error("roots.env.buckets.b (the changed field) is missing after Derive")

@@ -118,7 +118,7 @@ func newStylerStyles(t theme.Set) stylerStyles {
 		Bool:          styleOr(t, ConfigBool, theme.Info),
 		Null:          styleOr(t, ConfigNull, theme.Muted),
 		Comment:       styleOr(t, ConfigComment, theme.Muted),
-		Derived:       styleOr(t, ConfigDerived, theme.Warning),
+		Derived:       styleOr(t, LayerDerived, theme.Muted),
 		Redacted:      styleOr(t, ConfigRedacted, theme.Error),
 		AnnotationKey: styleOr(t, ConfigAnnotationKey, theme.Muted),
 		CodecValue:    codecStyle,

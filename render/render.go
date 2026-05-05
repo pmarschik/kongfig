@@ -12,8 +12,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -340,6 +342,19 @@ func WithTTYSize(cols, rows int) kongfig.RenderOption {
 // through [kongfig.Kongfig.RenderWith].
 func WithTTYSizeCtx(ctx context.Context, cols, rows int) context.Context {
 	return TTYSizeKey.WithCtx(ctx, TTYSize{Cols: cols, Rows: rows})
+}
+
+// TTYSizeFromEnv reads terminal dimensions from the COLUMNS and ROWS
+// environment variables that POSIX shells set. Returns (TTYSize, true)
+// when at least one variable is set to a positive integer; the other
+// field defaults to 0. Returns (TTYSize{}, false) when neither is set.
+func TTYSizeFromEnv() (TTYSize, bool) {
+	cols, _ := strconv.Atoi(os.Getenv("COLUMNS")) //nolint:errcheck // 0 on parse failure is the desired default
+	rows, _ := strconv.Atoi(os.Getenv("ROWS"))    //nolint:errcheck // 0 on parse failure is the desired default
+	if cols <= 0 && rows <= 0 {
+		return TTYSize{}, false
+	}
+	return TTYSize{Cols: cols, Rows: rows}, true
 }
 
 // AlignSources reports whether source annotation alignment is active (true by default).

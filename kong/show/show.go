@@ -155,8 +155,9 @@ func (f *Flags) Options(k *kongfig.Kongfig) []kongfig.RenderOption {
 	return opts
 }
 
-// autoTTYOpt returns a [render.WithTTYSize] option when w is a terminal.
-// Returns nil when w is not a terminal or the size cannot be determined.
+// autoTTYOpt returns a [render.WithTTYSize] option sized from the best available
+// source: ioctl on a real terminal, then COLUMNS/ROWS env vars (set by POSIX shells,
+// also valid when output is piped). Returns nil when no size can be determined.
 func autoTTYOpt(w io.Writer) kongfig.RenderOption {
 	if f, ok := w.(*os.File); ok {
 		fd := int(f.Fd()) //nolint:gosec // G115: fd values fit in int on all supported platforms
@@ -165,6 +166,9 @@ func autoTTYOpt(w io.Writer) kongfig.RenderOption {
 				return render.WithTTYSize(cols, rows)
 			}
 		}
+	}
+	if tty, ok := render.TTYSizeFromEnv(); ok {
+		return render.WithTTYSize(tty.Cols, tty.Rows)
 	}
 	return nil
 }

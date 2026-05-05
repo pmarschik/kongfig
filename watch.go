@@ -72,6 +72,11 @@ func (k *Kongfig) reloadEntry(w watchEntry, data ConfigData) error {
 	if w.data != nil {
 		lopts = append(lopts, WithProviderData(w.data))
 	}
+	if kop, ok := w.provider.(KeyOrderProvider); ok {
+		if ko := kop.KeyOrder(); len(ko) > 0 {
+			lopts = append(lopts, withKeyOrder(ko))
+		}
+	}
 	return k.LoadParsed(data, w.source, lopts...)
 }
 

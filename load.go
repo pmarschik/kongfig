@@ -13,13 +13,21 @@ import (
 type LoadOption func(*loadOptions)
 
 type loadOptions struct {
-	opts             options
 	parser           Parser
 	providerData     ProviderData
+	opts             options
+	keyOrder         map[string][]string
 	source           string
 	silenceKeys      []string
-	silenceSet       bool
 	overrideSourceID SourceID
+	silenceSet       bool
+}
+
+// withKeyOrder is an internal LoadOption used by reloadEntry to carry the
+// updated key order from a watch provider's re-parse through LoadParsed into
+// commitLayer, preserving --layers display order after a live reload.
+func withKeyOrder(ko map[string][]string) LoadOption {
+	return func(c *loadOptions) { c.keyOrder = ko }
 }
 
 // withLayerSourceID is an internal LoadOption used by RenderLayers to preserve the
@@ -181,7 +189,7 @@ func (k *Kongfig) LoadParsed(data ConfigData, source string, opts ...LoadOption)
 		k.registerParsersLocked(cfg.parser)
 		k.mu.Unlock()
 	}
-	return k.commitLayer(data, source, inferKind(source), parserFormat(cfg.parser), cfg.parser, cfg.providerData, nil, nil, cfg.overrideSourceID)
+	return k.commitLayer(data, source, inferKind(source), parserFormat(cfg.parser), cfg.parser, cfg.providerData, nil, cfg.keyOrder, cfg.overrideSourceID)
 }
 
 // parserFormat returns the format name from a parser if it implements ParserNamer, else "".

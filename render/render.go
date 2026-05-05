@@ -349,8 +349,8 @@ func WithTTYSizeCtx(ctx context.Context, cols, rows int) context.Context {
 // when at least one variable is set to a positive integer; the other
 // field defaults to 0. Returns (TTYSize{}, false) when neither is set.
 func TTYSizeFromEnv() (TTYSize, bool) {
-	cols, _ := strconv.Atoi(os.Getenv("COLUMNS")) // 0 on parse failure is the desired default
-	rows, _ := strconv.Atoi(os.Getenv("ROWS"))    // 0 on parse failure is the desired default
+	cols, _ := strconv.Atoi(os.Getenv("COLUMNS")) //nolint:errcheck // 0 on parse failure is the desired default
+	rows, _ := strconv.Atoi(os.Getenv("ROWS"))    //nolint:errcheck // 0 on parse failure is the desired default
 	if cols <= 0 && rows <= 0 {
 		return TTYSize{}, false
 	}

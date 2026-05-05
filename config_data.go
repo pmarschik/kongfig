@@ -139,10 +139,13 @@ func (d ConfigData) mergeFrom(src ConfigData, sm SourceMeta, prov *Provenance, f
 			path = prefix + "." + k
 		}
 		if fn, ok := fns[path]; ok {
-			if result, err := fn(d[k], sv); err == nil {
+			old := d[k]
+			if result, err := fn(old, sv); err == nil {
 				d[k] = result
 				prov.Set(path, sm)
-				delta[path] = sv
+				if fmt.Sprintf("%v", result) != fmt.Sprintf("%v", old) {
+					delta[path] = result
+				}
 				continue
 			}
 		}

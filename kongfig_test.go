@@ -721,6 +721,46 @@ func TestDerive_LayerData_IsDeltaNotFullOutput(t *testing.T) {
 	}
 }
 
+func TestDerive_ReplaceMergeFunc_UnchangedResult_NotInDelta(t *testing.T) {
+	// When a replace-style MergeFunc fires but produces the same value as the
+	// current state, that path should NOT appear in layer.Data and should NOT
+	// get "derived" provenance — only genuinely changed keys should.
+	k := kongfig.New()
+	k.SetMergeFunc("roots", func(_, src any) (any, error) { return src, nil })
+
+	mustLoad(t, k, &staticProvider{
+		source: "base",
+		data:   map[string]any{"roots": map[string]any{"a": 1}, "other": 42},
+	})
+
+	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{
+			"roots": in.Data["roots"], // same value — replace func fires, result == old
+			"extra": "new",
+		}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	layers := k.Layers()
+	flat := layers[1].Data.FlatValues()
+	if _, hasRoots := flat["roots.a"]; hasRoots {
+		t.Error("unchanged replace-func path should not appear in derived layer.Data")
+	}
+	if _, hasExtra := flat["extra"]; !hasExtra {
+		t.Error("new key 'extra' should appear in derived layer.Data")
+	}
+
+	// Replace-func stamps provenance at the registered path ("roots"), not sub-paths.
+	prov := k.Provenance().SourceMetas()
+	if prov["roots"].Layer.Name != "base" {
+		t.Errorf("roots provenance: got %q, want %q", prov["roots"].Layer.Name, "base")
+	}
+	if prov["extra"].Layer.Name != "derived" {
+		t.Errorf("extra provenance: got %q, want %q", prov["extra"].Layer.Name, "derived")
+	}
+}
+
 func TestDerive_CrossField(t *testing.T) {
 	// Example: compute normalized bucket dirnames from bucket names and a separator config.
 	k := kongfig.New()
@@ -976,9 +1016,9 @@ func TestDerive_UnchangedValues_RetainOriginalProvenance(t *testing.T) {
 
 	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
 		return kongfig.DeriveOutput{Data: kongfig.ConfigData{
-			"host": in.Data["host"],         // return unchanged
-			"port": in.Data["port"],         // return unchanged
-			"url":  "http://localhost:8080", // new value
+			"host": in.Data["host"],         // echoed back with same value
+			"port": in.Data["port"],         // echoed back with same value
+			"url":  "http://localhost:8080", // genuinely new
 		}}, nil
 	}); err != nil {
 		t.Fatal(err)

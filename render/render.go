@@ -107,9 +107,25 @@ func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 
 	// Recompute after re-check (some lines may have moved above).
 	maxInlineVW = 0
+	maxAnnVW := 0
 	for i, e := range parsed {
-		if e.ann != "" && !above[i] && e.vw > maxInlineVW {
-			maxInlineVW = e.vw
+		if e.ann != "" && !above[i] {
+			if e.vw > maxInlineVW {
+				maxInlineVW = e.vw
+			}
+			if e.annVW > maxAnnVW {
+				maxAnnVW = e.annVW
+			}
+		}
+	}
+
+	// Annotation start column: when the terminal is wide enough, push annotations
+	// to the right edge so the longest one ends at cols. Otherwise fall back to
+	// immediately after the longest content.
+	alignCol := maxInlineVW + 1
+	if cols > 0 {
+		if rightCol := cols - maxAnnVW; rightCol > alignCol {
+			alignCol = rightCol
 		}
 	}
 
@@ -122,7 +138,7 @@ func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 			_, _ = fmt.Fprintln(w, indent+strings.TrimLeft(e.ann, " "))
 			_, _ = fmt.Fprintln(w, e.content)
 		default:
-			_, _ = fmt.Fprintln(w, e.content+strings.Repeat(" ", maxInlineVW-e.vw+1)+e.ann)
+			_, _ = fmt.Fprintln(w, e.content+strings.Repeat(" ", alignCol-e.vw)+e.ann)
 		}
 	}
 	return nil
@@ -317,6 +333,13 @@ var TTYSizeKey = kongfig.NewRenderOptionsKey[TTYSize]()
 // required to honor this hint.
 func WithTTYSize(cols, rows int) kongfig.RenderOption {
 	return TTYSizeKey.Bind(TTYSize{Cols: cols, Rows: rows})
+}
+
+// WithTTYSizeCtx returns a context with terminal dimensions injected.
+// Use in tests or when calling [AlignAnnotationsCtx] directly without going
+// through [kongfig.Kongfig.RenderWith].
+func WithTTYSizeCtx(ctx context.Context, cols, rows int) context.Context {
+	return TTYSizeKey.WithCtx(ctx, TTYSize{Cols: cols, Rows: rows})
 }
 
 // AlignSources reports whether source annotation alignment is active (true by default).

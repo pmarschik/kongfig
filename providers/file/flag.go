@@ -10,9 +10,13 @@ import (
 
 // configPathsToSlice normalises a config path value to a slice of strings.
 // The value may be a string (single path) or a []string / []any produced by sep= splitting.
+// Empty strings are excluded so callers do not need to filter them separately.
 func configPathsToSlice(v any) []string {
 	switch v := v.(type) {
 	case string:
+		if v == "" {
+			return nil
+		}
 		return []string{v}
 	case []string:
 		return v
@@ -33,6 +37,10 @@ func configPathsToSlice(v any) []string {
 // from kf's current merged state (via the entry's Key) and loading the file.
 // Entries are processed in the order given; use [kongfig.Kongfig.ConfigPaths] or
 // [kongfig.ConfigPaths] to obtain a pre-sorted slice.
+//
+// All path values are resolved from a single snapshot of kf taken at call time,
+// before any file is loaded. A file loaded for one entry cannot influence the path
+// resolution for later entries.
 //
 // Returns on the first error. Files whose key is absent or empty are silently skipped.
 func LoadConfigPaths(ctx context.Context, kf *kongfig.Kongfig, entries []schema.ConfigPathEntry, opts ...kongfig.LoadOption) error {

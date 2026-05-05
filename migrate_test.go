@@ -277,6 +277,24 @@ func TestMigrationWarnings_NotAccumulated_OnFailedLoad(t *testing.T) {
 	}
 }
 
+func TestAddWarning_AccumulatesAlongsideMigrationWarnings(t *testing.T) {
+	k := newKongfigForMigrate()
+	k.AddWarning("app-level diagnostic")
+	got := k.MigrationWarnings()
+	if len(got) != 1 || got[0] != "app-level diagnostic" {
+		t.Errorf("AddWarning: got %v, want [\"app-level diagnostic\"]", got)
+	}
+
+	// Interleave with a migration warning to confirm both accumulate.
+	k.AddRename("old", "new", kongfig.MigrationPolicy{OnFirst: kongfig.MigrationWarnResult})
+	if err := loadData(t, k, map[string]any{"old": "v"}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if len(k.MigrationWarnings()) != 2 {
+		t.Errorf("expected 2 warnings total, got %v", k.MigrationWarnings())
+	}
+}
+
 // ── MigrationEvent built-in handlers ─────────────────────────────────────────
 
 func TestMigrationSilent(t *testing.T) {

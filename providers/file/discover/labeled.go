@@ -14,7 +14,7 @@ func WithLabel(label string, d innerDiscoverer) LabeledDiscoverer {
 	return LabeledDiscoverer{label: label, discoverer: d}
 }
 
-// DiscoveryHit is returned by [DiscoverFirst].
+// DiscoveryHit is returned by [First].
 // Path is empty when no discoverer found a file.
 type DiscoveryHit struct {
 	Label string // label from the winning [LabeledDiscoverer]

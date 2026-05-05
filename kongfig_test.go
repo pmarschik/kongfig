@@ -689,6 +689,38 @@ func TestDerive_AddsToLayers(t *testing.T) {
 	}
 }
 
+func TestDerive_LayerData_IsDeltaNotFullOutput(t *testing.T) {
+	// Regression: layer.Data should contain only keys that actually changed,
+	// not the full DeriveFn output. Otherwise --layers shows unchanged keys
+	// as if they were derived.
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		source: "base",
+		data:   map[string]any{"x": 1, "y": 2},
+	})
+
+	if err := k.Derive(func(_ kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{
+			"x": 1, // unchanged
+			"z": 3, // new
+		}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	layers := k.Layers()
+	if len(layers) != 2 {
+		t.Fatalf("layers: got %d, want 2", len(layers))
+	}
+	flat := layers[1].Data.FlatValues()
+	if _, hasX := flat["x"]; hasX {
+		t.Error("derived layer.Data should not contain unchanged key 'x'")
+	}
+	if _, hasZ := flat["z"]; !hasZ {
+		t.Error("derived layer.Data should contain new key 'z'")
+	}
+}
+
 func TestDerive_CrossField(t *testing.T) {
 	// Example: compute normalized bucket dirnames from bucket names and a separator config.
 	k := kongfig.New()

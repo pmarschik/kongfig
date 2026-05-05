@@ -217,6 +217,20 @@ func TestFirstOf_Empty_ReturnsFirstOfName(t *testing.T) {
 	}
 }
 
+func TestFirstOf_StopsOnError(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte("k: v"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dOK := discover.Compose("ok", staticDirs(tmp), discover.LocateConfigBase())
+	d := discover.FirstOf(&errorDiscoverer{}, dOK)
+
+	_, err := d.Discover(context.Background(), []string{".yaml"})
+	if err == nil {
+		t.Fatal("expected error from errorDiscoverer, got nil")
+	}
+}
+
 // staticDirs returns a DirProvider that always yields dir as the only entry.
 func staticDirs(dir string) discover.DirProvider {
 	return func(_ context.Context) ([]discover.DirEntry, error) {

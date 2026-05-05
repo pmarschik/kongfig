@@ -294,7 +294,11 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 // DeriveInput is passed to [DeriveFn] by [Kongfig.Derive].
 // Additional fields may be added in future minor versions.
 type DeriveInput struct {
-	Data       ConfigData
+	// Data is the full merged configuration at the time Derive is called.
+	Data ConfigData
+	// Provenance is a snapshot of source attribution taken before the derive
+	// function runs. It does not include any keys written by this derive call.
+	// Mutating it does not affect the Kongfig state.
 	Provenance *Provenance
 }
 
@@ -333,6 +337,7 @@ type DeriveFn func(DeriveInput) (DeriveOutput, error)
 //	})
 //
 // Errors from fn cause Derive to return that error without modifying the Kongfig state.
+// OnLoad hooks are not fired; Derive is a synchronous post-load operation, not a provider load.
 func (k *Kongfig) Derive(fn DeriveFn) error {
 	k.mu.RLock()
 	current := k.data.Clone()
@@ -411,10 +416,10 @@ type DeriveLoadFn func(DeriveInput) ([]Provider, error)
 //	k.MustLoad(ctx, defaults)
 //	k.MustLoad(ctx, envProvider)
 //	k.DeriveLoad(ctx, func(in kongfig.DeriveInput) ([]kongfig.Provider, error) {
-//	    cfg, _ := kongfig.Get[AppConfig](k)
+//	    roots, _ := in.Data["roots"].([]any)
 //	    var providers []kongfig.Provider
-//	    for _, root := range cfg.Roots {
-//	        providers = append(providers, file.Provider(filepath.Join(root, ".app.yaml")))
+//	    for _, root := range roots {
+//	        providers = append(providers, file.Provider(filepath.Join(fmt.Sprint(root), ".app.yaml")))
 //	    }
 //	    return providers, nil
 //	})

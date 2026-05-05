@@ -168,15 +168,29 @@ func (d ConfigData) mergeFrom(src ConfigData, sm SourceMeta, prov *Provenance, f
 // values differ from the corresponding values in current. Sub-maps are recursed;
 // sub-maps that produce no changed keys are omitted entirely.
 // Used by Derive so that provenance is only updated for keys the derive actually changed.
-func pruneUnchanged(src, current ConfigData) ConfigData {
+//
+// fns is the registered MergeFunc map (may be nil). Any key whose dot-joined path
+// matches a registered merge func is included without pruning: we cannot know
+// whether the func is replace-style, so stripping a field would silently drop it
+// from the merged state if the func replaces the whole value.
+func pruneUnchanged(src, current ConfigData, fns map[string]MergeFunc, prefix string) ConfigData {
 	out := make(ConfigData)
 	for k, sv := range src {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		// A registered merge func controls this path: include unconditionally.
+		if _, hasFn := fns[path]; hasFn {
+			out[k] = sv
+			continue
+		}
 		cv := current[k]
 		srcSub, srcIsMap := sv.(ConfigData)
 		curSub, curIsMap := cv.(ConfigData)
 		switch {
 		case srcIsMap && curIsMap:
-			if pruned := pruneUnchanged(srcSub, curSub); len(pruned) > 0 {
+			if pruned := pruneUnchanged(srcSub, curSub, fns, path); len(pruned) > 0 {
 				out[k] = pruned
 			}
 		case fmt.Sprintf("%v", sv) != fmt.Sprintf("%v", cv):

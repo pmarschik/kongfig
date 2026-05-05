@@ -366,7 +366,7 @@ func (k *Kongfig) Derive(fn DeriveFn) error {
 	k.mu.Lock()
 	proposed := k.data.Clone()
 	proposedProv := k.prov.clone()
-	data = pruneUnchanged(data, proposed)
+	data = pruneUnchanged(data, proposed, k.cfg.mergeFuncs, "")
 	delta := make(ConfigData)
 	proposed.mergeFrom(data, sm, proposedProv, k.cfg.mergeFuncs, delta, "")
 	layer := Layer{Meta: lm, Data: unflattenDelta(delta), Parser: nil, KeyOrder: nil}

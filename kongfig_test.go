@@ -872,3 +872,58 @@ func TestDeriveLoad_EmptyProviders_NoOp(t *testing.T) {
 		t.Errorf("layers: got %d, want 1", len(k.Layers()))
 	}
 }
+
+// TestDerive_PruneUnchanged_SafeWithReplaceMergeFunc is a regression test for the
+// interaction between pruneUnchanged and replace-style MergeFuncs.
+//
+// Before the fix: pruneUnchanged would strip sub-fields of a replace-path that were
+// unchanged, then the replace MergeFunc would fire on the pruned overlay — silently
+// dropping the stripped fields from k.data.
+func TestDerive_PruneUnchanged_SafeWithReplaceMergeFunc(t *testing.T) {
+	k := kongfig.New()
+
+	// Replace-style merge func: the whole value at "roots" is replaced by the overlay.
+	k.SetMergeFunc("roots", func(_, src any) (any, error) { return src, nil })
+
+	// Load base data: roots.env has both "path" and "buckets".
+	mustLoad(t, k, &staticProvider{
+		source: "base",
+		data: map[string]any{
+			"roots": map[string]any{
+				"env": map[string]any{
+					"path":    "/some/path",
+					"buckets": map[string]any{"a": true},
+				},
+			},
+		},
+	})
+
+	// Derive normalises buckets but leaves path unchanged.
+	// Without the fix, pruneUnchanged strips "path" (same value) and the replace
+	// func installs {env: {buckets: ...}} without path — silently losing it.
+	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		roots, ok1 := in.Data["roots"].(kongfig.ConfigData)
+		env, ok2 := roots["env"].(kongfig.ConfigData)
+		if !ok1 || !ok2 {
+			return kongfig.DeriveOutput{}, errors.New("unexpected shape")
+		}
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{
+			"roots": kongfig.ConfigData{
+				"env": kongfig.ConfigData{
+					"path":    env["path"],                              // unchanged
+					"buckets": kongfig.ConfigData{"a": true, "b": true}, // changed
+				},
+			},
+		}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	flat := k.All().FlatValues()
+	if _, ok := flat["roots.env.path"]; !ok {
+		t.Error("roots.env.path lost after Derive with replace MergeFunc — pruneUnchanged must not strip merge-func paths")
+	}
+	if _, ok := flat["roots.env.buckets.b"]; !ok {
+		t.Error("roots.env.buckets.b (the changed field) is missing after Derive")
+	}
+}

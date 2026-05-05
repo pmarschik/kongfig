@@ -195,9 +195,16 @@ func (r *renameEntry) dispatch(e MigrationEvent) MigrationResult {
 
 // ── Warning accessors ──────────────────────────────────────────────────────────
 
-// MigrationWarnings returns all non-fatal migration warnings accumulated across
-// Load calls since creation or the last [ClearMigrationWarnings] call.
-// Warnings are only added when a load completes successfully.
+// AddWarning appends a non-fatal notice to the warnings list.
+// Use this to surface application-level diagnostics alongside migration warnings.
+func (k *Kongfig) AddWarning(msg string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.cfg.migrationWarnings = append(k.cfg.migrationWarnings, msg)
+}
+
+// MigrationWarnings returns all non-fatal warnings accumulated across Load calls
+// and via [AddWarning] since creation or the last [ClearMigrationWarnings] call.
 func (k *Kongfig) MigrationWarnings() []string {
 	k.mu.RLock()
 	defer k.mu.RUnlock()

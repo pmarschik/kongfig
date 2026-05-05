@@ -328,6 +328,60 @@ func TestBindRender_BlockCollections(t *testing.T) {
 	}
 }
 
+// markerStyler wraps Key calls with "<<" / ">>" so tests can verify styling was applied.
+type markerStyler struct{ plainStyler }
+
+func (markerStyler) Key(s string) string { return "<<" + s + ">>" }
+
+func TestBindRender_BlockSliceOfMaps_KeysStyled(t *testing.T) {
+	// Slice-of-maps in block mode: keys inside each map element must go through s.Key().
+	items := []any{
+		kongfig.ConfigData{"dir": "path/a", "parent": "scope/b"},
+	}
+	data := kongfig.ConfigData{"aux": items}
+	ctx := kongfig.WithRenderBlockCollectionsCtx(context.Background())
+
+	s := markerStyler{}
+	var buf bytes.Buffer
+	r := yamlparser.Default.Bind(s)
+	if err := r.Render(ctx, &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "<<dir>>") {
+		t.Errorf("expected s.Key() applied to 'dir' in block output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "<<parent>>") {
+		t.Errorf("expected s.Key() applied to 'parent' in block output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "- <<dir>>") {
+		t.Errorf("expected '- <<dir>>' sequence marker in output, got:\n%s", out)
+	}
+}
+
+func TestBindRender_BlockSliceOfMaps_Structure(t *testing.T) {
+	// Verify the block YAML structure for a slice of maps is valid.
+	items := []any{
+		kongfig.ConfigData{"dir": "ixopay-research/foo", "parent": "iron-cactus-squad/bar"},
+		kongfig.ConfigData{"dir": "other/path"},
+	}
+	data := kongfig.ConfigData{"aux": items}
+	ctx := kongfig.WithRenderBlockCollectionsCtx(context.Background())
+
+	var buf bytes.Buffer
+	r := yamlparser.Default.Bind(plainStyler{})
+	if err := r.Render(ctx, &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "- dir:") && !strings.Contains(out, "- dir: ") {
+		t.Errorf("expected '- dir:' sequence entry in block output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "parent:") {
+		t.Errorf("expected 'parent' key in block output, got:\n%s", out)
+	}
+}
+
 func TestYAMLRenderer_AlignSources(t *testing.T) {
 	kf := kongfig.New()
 	if err := kf.Load(context.Background(), &staticProvider{

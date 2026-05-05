@@ -126,7 +126,7 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-//nolint:gocognit,cyclop,nestif // complex recursive renderer, intentional
+//nolint:gocognit,cyclop // complex recursive renderer, intentional
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix string, indent int, align bool) error {
 	keys := render.OrderedKeys(ctx, prefix, data)
 
@@ -174,20 +174,14 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		// Collections (slices, maps) use YAML-native syntax and switch to block
 		// style when the inline form would exceed the terminal width.
 		var formatted string
-		var blockLines []string
+		var useBlock bool
 		if !isRV || !rv.Redacted {
 			switch {
 			case isYAMLCollection(rawVal):
 				inline := yamlFlowValue(rawVal)
 				keyW := render.VisualWidth(s.Key(k))
 				if forceBlock || (cols > 0 && len(pad)+keyW+2+render.VisualWidth(inline) > cols) {
-					if b, err := goyaml.Marshal(rawVal); err == nil {
-						for bl := range strings.SplitSeq(strings.TrimRight(string(b), "\n"), "\n") {
-							blockLines = append(blockLines, bl)
-						}
-					} else {
-						formatted = inline // marshal failed, use inline as fallback
-					}
+					useBlock = true
 				} else {
 					formatted = inline
 				}
@@ -198,7 +192,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 			}
 		}
 
-		if len(blockLines) > 0 {
+		if useBlock {
 			// Block form: annotation goes above the key line.
 			if isRV {
 				if ann := render.Annotation(ctx, rv, path, s); ann != "" {
@@ -206,10 +200,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 				}
 			}
 			fmt.Fprintf(w, "%s%s:\n", pad, s.Key(k))
-			blockPad := pad + "  "
-			for _, bl := range blockLines {
-				fmt.Fprintf(w, "%s%s\n", blockPad, bl)
-			}
+			renderYAMLCollection(w, s, rawVal, pad+"  ")
 			continue
 		}
 
@@ -264,5 +255,91 @@ func setYAMLFlowStyle(n *goyaml.Node) {
 	}
 	for _, c := range n.Content {
 		setYAMLFlowStyle(c)
+	}
+}
+
+// renderYAMLCollection renders a YAML collection in block form with Styler-applied
+// key and value coloring. It marshals v to a YAML AST and walks it with styling.
+// pad is the left-margin prefix for top-level items in the collection.
+func renderYAMLCollection(w io.Writer, s kongfig.Styler, v any, pad string) {
+	b, err := goyaml.Marshal(v)
+	if err != nil {
+		return // unlikely; key line already printed by caller
+	}
+	var root goyaml.Node
+	if err := goyaml.Unmarshal(b, &root); err != nil || len(root.Content) == 0 {
+		// Fallback: raw goyaml lines without key styling.
+		for line := range strings.SplitSeq(strings.TrimRight(string(b), "\n"), "\n") {
+			fmt.Fprintf(w, "%s%s\n", pad, line)
+		}
+		return
+	}
+	renderYAMLNode(w, s, root.Content[0], pad)
+}
+
+// renderYAMLNode renders a YAML AST node in block form with styled keys/values.
+func renderYAMLNode(w io.Writer, s kongfig.Styler, node *goyaml.Node, pad string) {
+	switch node.Kind { //nolint:exhaustive // DocumentNode/ScalarNode/AliasNode don't appear as collection children
+	case goyaml.SequenceNode:
+		for _, elem := range node.Content {
+			switch elem.Kind {
+			case goyaml.MappingNode:
+				if len(elem.Content) == 0 {
+					fmt.Fprintf(w, "%s- {}\n", pad)
+				} else {
+					renderYAMLSeqMap(w, s, elem, pad)
+				}
+			case goyaml.SequenceNode:
+				fmt.Fprintf(w, "%s-\n", pad)
+				renderYAMLNode(w, s, elem, pad+"  ")
+			default:
+				fmt.Fprintf(w, "%s- %s\n", pad, styledYAMLScalar(s, elem))
+			}
+		}
+	case goyaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			kn := node.Content[i]
+			vn := node.Content[i+1]
+			if vn.Kind == goyaml.MappingNode || vn.Kind == goyaml.SequenceNode {
+				fmt.Fprintf(w, "%s%s:\n", pad, s.Key(kn.Value))
+				renderYAMLNode(w, s, vn, pad+"  ")
+			} else {
+				fmt.Fprintf(w, "%s%s: %s\n", pad, s.Key(kn.Value), styledYAMLScalar(s, vn))
+			}
+		}
+	}
+}
+
+// renderYAMLSeqMap renders a YAML mapping node as a sequence element.
+// The first key gets the "- " list marker; subsequent keys get "  " continuation indent.
+// Nested collections inside values are indented by 4 extra spaces (marker + indent).
+func renderYAMLSeqMap(w io.Writer, s kongfig.Styler, mnode *goyaml.Node, pad string) {
+	for i := 0; i+1 < len(mnode.Content); i += 2 {
+		kn := mnode.Content[i]
+		vn := mnode.Content[i+1]
+		prefix := "  "
+		if i == 0 {
+			prefix = "- "
+		}
+		if vn.Kind == goyaml.MappingNode || vn.Kind == goyaml.SequenceNode {
+			fmt.Fprintf(w, "%s%s%s:\n", pad, prefix, s.Key(kn.Value))
+			renderYAMLNode(w, s, vn, pad+"    ")
+		} else {
+			fmt.Fprintf(w, "%s%s%s: %s\n", pad, prefix, s.Key(kn.Value), styledYAMLScalar(s, vn))
+		}
+	}
+}
+
+// styledYAMLScalar applies the appropriate Styler method based on the YAML node's tag.
+func styledYAMLScalar(s kongfig.Styler, node *goyaml.Node) string {
+	switch node.Tag {
+	case "!!int", "!!float":
+		return s.Number(node.Value)
+	case "!!bool":
+		return s.Bool(node.Value)
+	case "!!null":
+		return s.Null("null")
+	default:
+		return s.String(node.Value)
 	}
 }

@@ -164,6 +164,30 @@ func (d ConfigData) mergeFrom(src ConfigData, sm SourceMeta, prov *Provenance, f
 	}
 }
 
+// unflattenDelta reconstructs a nested ConfigData from the flat delta produced by
+// mergeFrom (keys are dot-joined paths, values are the new leaf values).
+func unflattenDelta(flat ConfigData) ConfigData {
+	result := make(ConfigData)
+	for dotPath, val := range flat {
+		setNestedKey(result, dotPath, val)
+	}
+	return result
+}
+
+func setNestedKey(m ConfigData, dotPath string, val any) {
+	key, rest, nested := strings.Cut(dotPath, ".")
+	if !nested {
+		m[dotPath] = val
+		return
+	}
+	sub, ok := m[key].(ConfigData)
+	if !ok {
+		sub = make(ConfigData)
+		m[key] = sub
+	}
+	setNestedKey(sub, rest, val)
+}
+
 // applyCodecs applies registered path codecs to leaf values, returning a new ConfigData
 // with decoded (typed) values. Only paths present in codecs are affected; others pass through.
 // Returns an error if any codec.decode call fails.

@@ -84,7 +84,15 @@ func prepareRender(ctx context.Context, kf *Kongfig, opts ...RenderOption) (Conf
 	}
 
 	sourceMetas := kf.Provenance().SourceMetas()
-	data := wrapRenderData(kf.All(), sourceMetas, ro, "")
+	all := kf.All()
+	// Config-path keys are loading infrastructure (file pointers), not config values.
+	// Hide them from rendered output so they don't appear in "config show".
+	kf.mu.RLock()
+	for _, cp := range kf.cfg.configPaths {
+		deleteNested(all, strings.Split(cp.Key, "."))
+	}
+	kf.mu.RUnlock()
+	data := wrapRenderData(all, sourceMetas, ro, "")
 	childCtx := withRenderOptsCtx(ctx, ro)
 	return data, childCtx
 }

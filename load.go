@@ -353,8 +353,7 @@ func (k *Kongfig) Derive(fn DeriveFn) error {
 	proposedProv := k.prov.clone()
 	delta := make(ConfigData)
 	proposed.mergeFrom(data, sm, proposedProv, k.cfg.mergeFuncs, delta, "")
-	snapshot := data.Clone()
-	layer := Layer{Meta: lm, Data: snapshot, Parser: nil, KeyOrder: nil}
+	layer := Layer{Meta: lm, Data: unflattenDelta(delta), Parser: nil, KeyOrder: nil}
 	k.mu.Unlock()
 
 	// Since Derive is a synchronous post-load operation with no hooks (unlike Load),

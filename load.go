@@ -13,12 +13,21 @@ import (
 type LoadOption func(*loadOptions)
 
 type loadOptions struct {
-	opts         options
-	parser       Parser
-	providerData ProviderData
-	source       string
-	silenceKeys  []string
-	silenceSet   bool
+	opts             options
+	parser           Parser
+	providerData     ProviderData
+	source           string
+	silenceKeys      []string
+	silenceSet       bool
+	overrideSourceID SourceID
+}
+
+// withLayerSourceID is an internal LoadOption used by RenderLayers to preserve the
+// original layer's SourceID when re-loading its data into a per-layer Kongfig.
+// Without this, field name lookups (PathFieldNames keyed by SourceID) fail because
+// the new Kongfig would generate a different SourceID than the one in the field names map.
+func withLayerSourceID(id SourceID) LoadOption {
+	return func(c *loadOptions) { c.overrideSourceID = id }
 }
 
 // loadOptionsCtxKey is the context key for the active loadOptions.
@@ -130,7 +139,7 @@ func (k *Kongfig) Load(ctx context.Context, provider Provider, opts ...LoadOptio
 	// Extract parser format name for LayerMeta.
 	format := parserFormat(parser)
 
-	return k.commitLayer(data, source, kind, format, parser, pd, fieldNames, keyOrder)
+	return k.commitLayer(data, source, kind, format, parser, pd, fieldNames, keyOrder, 0)
 }
 
 // MustLoad calls Load and panics on error. Useful in init-time setup where
@@ -172,7 +181,7 @@ func (k *Kongfig) LoadParsed(data ConfigData, source string, opts ...LoadOption)
 		k.registerParsersLocked(cfg.parser)
 		k.mu.Unlock()
 	}
-	return k.commitLayer(data, source, inferKind(source), parserFormat(cfg.parser), cfg.parser, cfg.providerData, nil, nil)
+	return k.commitLayer(data, source, inferKind(source), parserFormat(cfg.parser), cfg.parser, cfg.providerData, nil, nil, cfg.overrideSourceID)
 }
 
 // parserFormat returns the format name from a parser if it implements ParserNamer, else "".
@@ -186,10 +195,14 @@ func parserFormat(p Parser) string {
 	return ""
 }
 
-func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, parser Parser, pd ProviderData, fieldNames map[string]string, keyOrder map[string][]string) error {
+func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, parser Parser, pd ProviderData, fieldNames map[string]string, keyOrder map[string][]string, overrideSourceID SourceID) error {
 	// Build LayerMeta: stamp ID, name, kind, format and timestamp; store provider data.
+	id := overrideSourceID
+	if id == 0 {
+		id = nextSourceID()
+	}
 	lm := LayerMeta{
-		ID:        nextSourceID(),
+		ID:        id,
 		Timestamp: time.Now(),
 		Name:      source,
 		Kind:      kind,
@@ -348,9 +361,12 @@ func (k *Kongfig) Derive(fn DeriveFn) error {
 	sm := SourceMeta{Layer: lm}
 
 	// Merge derived data into the current state.
+	// Prune keys whose value equals the existing state so that only genuinely
+	// new or changed keys get "derived" provenance in the merged view.
 	k.mu.Lock()
 	proposed := k.data.Clone()
 	proposedProv := k.prov.clone()
+	data = pruneUnchanged(data, proposed)
 	delta := make(ConfigData)
 	proposed.mergeFrom(data, sm, proposedProv, k.cfg.mergeFuncs, delta, "")
 	layer := Layer{Meta: lm, Data: unflattenDelta(delta), Parser: nil, KeyOrder: nil}

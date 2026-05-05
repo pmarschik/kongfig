@@ -164,6 +164,28 @@ func (d ConfigData) mergeFrom(src ConfigData, sm SourceMeta, prov *Provenance, f
 	}
 }
 
+// pruneUnchanged returns a new ConfigData containing only the keys from src whose
+// values differ from the corresponding values in current. Sub-maps are recursed;
+// sub-maps that produce no changed keys are omitted entirely.
+// Used by Derive so that provenance is only updated for keys the derive actually changed.
+func pruneUnchanged(src, current ConfigData) ConfigData {
+	out := make(ConfigData)
+	for k, sv := range src {
+		cv := current[k]
+		srcSub, srcIsMap := sv.(ConfigData)
+		curSub, curIsMap := cv.(ConfigData)
+		switch {
+		case srcIsMap && curIsMap:
+			if pruned := pruneUnchanged(srcSub, curSub); len(pruned) > 0 {
+				out[k] = pruned
+			}
+		case fmt.Sprintf("%v", sv) != fmt.Sprintf("%v", cv):
+			out[k] = sv
+		}
+	}
+	return out
+}
+
 // unflattenDelta reconstructs a nested ConfigData from the flat delta produced by
 // mergeFrom (keys are dot-joined paths, values are the new leaf values).
 func unflattenDelta(flat ConfigData) ConfigData {

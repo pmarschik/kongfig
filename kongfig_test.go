@@ -928,3 +928,40 @@ func TestDerive_ReplaceMergeFunc_PreservesUnchangedSubFields(t *testing.T) {
 		t.Error("roots.env.buckets.b (the changed field) is missing after Derive")
 	}
 }
+
+// TestDerive_UnchangedValues_RetainOriginalProvenance verifies that when Derive returns
+// a value that equals the current state, that key retains its original provenance and
+// does NOT get stamped as "derived".
+func TestDerive_UnchangedValues_RetainOriginalProvenance(t *testing.T) {
+	k := kongfig.New()
+	mustLoad(t, k, &staticProvider{
+		source: "base",
+		data: map[string]any{
+			"host": "localhost",
+			"port": 8080,
+		},
+	})
+
+	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{
+			"host": in.Data["host"],         // return unchanged
+			"port": in.Data["port"],         // return unchanged
+			"url":  "http://localhost:8080", // new value
+		}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	prov := k.Provenance()
+	metas := prov.SourceMetas()
+
+	if got := metas["host"].Layer.Name; got != "base" {
+		t.Errorf("host provenance: got %q, want %q (unchanged value should not be 'derived')", got, "base")
+	}
+	if got := metas["port"].Layer.Name; got != "base" {
+		t.Errorf("port provenance: got %q, want %q (unchanged value should not be 'derived')", got, "base")
+	}
+	if got := metas["url"].Layer.Name; got != "derived" {
+		t.Errorf("url provenance: got %q, want %q (new value should be 'derived')", got, "derived")
+	}
+}

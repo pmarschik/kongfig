@@ -14,8 +14,8 @@ import (
 type LoadOption func(*loadOptions)
 
 // pipelineEntry records one step in the ordered load/derive pipeline.
-// Provider entries carry the post-transform layer snapshot; derive entries carry
-// the registered function and the stable LayerMeta assigned on first run.
+// Every entry carries the full layer snapshot (Meta + Data); for derive entries
+// fn is also set and Data holds the last-computed output.
 // On watch reload, the full pipeline is replayed so derives always see the
 // accumulated state of the layers that precede them.
 type pipelineEntry struct {
@@ -119,7 +119,10 @@ func (k *Kongfig) Load(ctx context.Context, provider Provider, opts ...LoadOptio
 	// Collision detection: warn if an env.* provider overlaps with existing env.* layers.
 	if isEnvSource(source) && !cfg.silenceSet {
 		k.mu.RLock()
-		existing := k.layers
+		existing := make([]Layer, len(k.pipeline))
+		for i := range k.pipeline {
+			existing[i] = k.pipeline[i].layer
+		}
 		k.mu.RUnlock()
 		k.warnEnvCollisions(source, data, existing, cfg.silenceKeys)
 	}
@@ -209,9 +212,10 @@ func (k *Kongfig) LoadParsed(data ConfigData, source string, opts ...LoadOption)
 // post-transform snapshot; derive entries re-run their function against the accumulated
 // state at that position in the pipeline.
 //
-// Returns the proposed (uncommitted) new state so callers can fire onLoad hooks and
-// decide whether to commit.
-func (k *Kongfig) replayPipeline() (ConfigData, *Provenance, []Layer, error) {
+// Returns the proposed (uncommitted) new state and the updated pipeline copy (derive
+// entries have layer.Data populated with the freshly computed output) so the caller
+// can fire onLoad hooks and then commit by replacing k.pipeline.
+func (k *Kongfig) replayPipeline() (ConfigData, *Provenance, []pipelineEntry, error) {
 	k.mu.RLock()
 	pipeline := make([]pipelineEntry, len(k.pipeline))
 	copy(pipeline, k.pipeline)
@@ -220,7 +224,6 @@ func (k *Kongfig) replayPipeline() (ConfigData, *Provenance, []Layer, error) {
 
 	data := make(ConfigData)
 	prov := NewProvenance()
-	var layers []Layer
 
 	for i := range pipeline {
 		e := &pipeline[i]
@@ -228,7 +231,6 @@ func (k *Kongfig) replayPipeline() (ConfigData, *Provenance, []Layer, error) {
 			sm := SourceMeta{Layer: e.layer.Meta}
 			delta := make(ConfigData)
 			data.mergeFrom(e.layer.Data.Clone(), sm, prov, mergeFns, delta, "")
-			layers = append(layers, e.layer)
 		} else {
 			out, err := e.fn(DeriveInput{Data: data.Clone(), Provenance: prov.clone()})
 			if err != nil {
@@ -244,11 +246,12 @@ func (k *Kongfig) replayPipeline() (ConfigData, *Provenance, []Layer, error) {
 			for path := range delta {
 				prov.Set(path, sm)
 			}
-			layers = append(layers, Layer{Meta: lm, Data: unflattenDelta(delta)})
+			e.layer.Data = unflattenDelta(delta)
+			e.layer.Meta.Timestamp = lm.Timestamp
 		}
 	}
 
-	return data, prov, layers, nil
+	return data, prov, pipeline, nil
 }
 
 // pipelineStateDelta returns a flat ConfigData of keys whose values differ between
@@ -371,7 +374,6 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 	k.mu.Lock()
 	k.data = proposed
 	k.prov = proposedProv
-	k.layers = append(k.layers, layer)
 	k.pipeline = append(k.pipeline, pipelineEntry{isDerive: false, layer: layer})
 	k.cfg.migrationWarnings = append(k.cfg.migrationWarnings, renameWarnings...)
 	k.mu.Unlock()
@@ -474,10 +476,8 @@ func (k *Kongfig) Derive(fn DeriveFn) error {
 	k.mu.Lock()
 	k.data = proposed
 	k.prov = proposedProv
-	k.layers = append(k.layers, layer)
-	// Register in pipeline so watch reloads replay the derive against the accumulated
-	// provider state at this position, not against stale derived values.
-	k.pipeline = append(k.pipeline, pipelineEntry{isDerive: true, fn: fn, layer: Layer{Meta: lm}})
+	// Store the full layer (with Data) so pipeline and Layers() stay in sync.
+	k.pipeline = append(k.pipeline, pipelineEntry{isDerive: true, fn: fn, layer: layer})
 	k.mu.Unlock()
 
 	return nil

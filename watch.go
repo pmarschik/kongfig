@@ -128,7 +128,7 @@ func (k *Kongfig) reloadEntry(w watchEntry, rawData ConfigData) error { //nolint
 	}
 
 	// Replay the full pipeline so derives re-run against the correct accumulated state.
-	newData, newProv, newLayers, err := k.replayPipeline()
+	newData, newProv, newPipeline, err := k.replayPipeline()
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func (k *Kongfig) reloadEntry(w watchEntry, rawData ConfigData) error { //nolint
 	k.mu.Lock()
 	k.data = newData
 	k.prov = newProv
-	k.layers = newLayers
+	k.pipeline = newPipeline
 	k.cfg.migrationWarnings = append(k.cfg.migrationWarnings, renameWarnings...)
 	k.mu.Unlock()
 

@@ -75,7 +75,6 @@ type Kongfig struct {
 	hooks    hookState
 	cfg      cfgState
 	render   renderConfig
-	layers   []Layer
 	parsers  []Parser
 	pipeline []pipelineEntry
 	mu       sync.RWMutex

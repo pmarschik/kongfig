@@ -23,10 +23,10 @@ func (k *Kongfig) Flat() ConfigData {
 func (k *Kongfig) Layers() []Layer {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
-	out := make([]Layer, len(k.layers))
-	for i := range k.layers {
-		out[i] = k.layers[i]
-		out[i].Data = k.layers[i].Data.Clone()
+	out := make([]Layer, len(k.pipeline))
+	for i := range k.pipeline {
+		out[i] = k.pipeline[i].layer
+		out[i].Data = k.pipeline[i].layer.Data.Clone()
 	}
 	return out
 }

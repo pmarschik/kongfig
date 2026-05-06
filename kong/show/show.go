@@ -412,7 +412,8 @@ func renderPerLayer(ctx context.Context, w io.Writer, k *kongfig.Kongfig, format
 			return nil
 		}
 		fmt.Fprintf(w, "%s %s %s\n", s.Comment("# ==="), layerHeader(lctx, layer, s), s.Comment("==="))
-		if err := renderLayerData(lctx, w, layer, format, defaultRenderer, s, renderers, data); err != nil {
+		layerCtx := render.WithCurrentLayerCtx(lctx, layer.Meta.ID)
+		if err := renderLayerData(layerCtx, w, layer, format, defaultRenderer, s, renderers, data); err != nil {
 			return err
 		}
 		fmt.Fprintln(w)

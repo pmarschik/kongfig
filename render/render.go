@@ -220,14 +220,29 @@ func Value(s kongfig.Styler, v any, formatted string) string {
 	}
 }
 
+// currentLayerIDKey holds the SourceID of the layer currently being rendered.
+// When set, Annotation suppresses annotations that match it (redundant with the layer header).
+var currentLayerIDKey = kongfig.NewRenderOptionsKey[kongfig.SourceID]()
+
+// WithCurrentLayerCtx returns a context that suppresses per-value source
+// annotations whose source matches id. Used by --layers rendering so the
+// layer header (# === name ===) is the sole attribution for that layer's values.
+func WithCurrentLayerCtx(ctx context.Context, id kongfig.SourceID) context.Context {
+	return currentLayerIDKey.WithCtx(ctx, id)
+}
+
 // Annotation renders the source annotation for a RenderedValue.
-// Returns "" when rv has no source (zero SourceMeta) or when NoComments is active.
+// Returns "" when rv has no source (zero SourceMeta), when NoComments is active,
+// or when the source layer matches the current rendering layer (already shown in header).
 // Renderers do not need to check [NoComments] separately before calling this.
 func Annotation(ctx context.Context, rv kongfig.RenderedValue, path string, s kongfig.Styler) string {
 	if NoComments(ctx) {
 		return ""
 	}
 	if rv.Source == (kongfig.SourceMeta{}) {
+		return ""
+	}
+	if id, ok := currentLayerIDKey.Read(ctx); ok && id == rv.Source.Layer.ID {
 		return ""
 	}
 	return rv.Source.Layer.RenderAnnotation(ctx, s, path)

@@ -11,5 +11,7 @@ require (
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/pmarschik/kongfig/parsers/toml v0.4.0 // indirect
+	github.com/pmarschik/kongfig/parsers/yaml v0.4.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 )

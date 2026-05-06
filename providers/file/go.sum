@@ -1,6 +1,16 @@
+github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
+github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
 github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
 github.com/go-viper/mapstructure/v2 v2.5.0 h1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro=
 github.com/go-viper/mapstructure/v2 v2.5.0/go.mod h1:oJDH3BJKyqBA2TXFhDsKDGDTlndYOZ6rGS0BRZIxGhM=
-github.com/pmarschik/kongfig v0.4.0 h1:LvBzFnD7emfGEjPaa7r/JPhejCU4ZmBacMvnAybzxvQ=
+github.com/pmarschik/kongfig v0.5.0 h1:rrV9lhYN7grIeXNvtShmSb/xnAUPuMC4zIX0fR90vV8=
+github.com/pmarschik/kongfig v0.5.0/go.mod h1:mEzjsBBVUCQVIJoc6TgKCy438kUkGaLCfx4hyQ1pugg=
+github.com/pmarschik/kongfig/parsers/toml v0.4.0 h1:IsmGngk/RpA80lkiwiiq/D5ljB9NvLFl+teLk1H2aJM=
+github.com/pmarschik/kongfig/parsers/toml v0.4.0/go.mod h1:FB8LNjfSMqaWgtqDigyT7HVkYXtIpUobL9//WJCy2KE=
+github.com/pmarschik/kongfig/parsers/yaml v0.4.0 h1:15X2TwN5o6JuixswLKE2UfkVsFN0Fa9D74vlvqQJZuk=
+github.com/pmarschik/kongfig/parsers/yaml v0.4.0/go.mod h1:qxjK0TmNhuSn2v171bM2dQ52ECpgvrfsRrwxvA88v+s=
 golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=
+golang.org/x/sys v0.43.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=

@@ -114,26 +114,35 @@ type renderer struct {
 	s kongfig.Styler
 }
 
+// yamlRenderOpts groups the layout options that are computed once per Render call
+// and shared across all recursive rendering functions.
+type yamlRenderOpts struct {
+	cols       int
+	forceBlock bool
+	align      bool
+}
+
 func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigData) error {
+	tty, _ := render.TTYSizeKey.Read(ctx)
+	opts := yamlRenderOpts{
+		cols:       tty.Cols,
+		forceBlock: render.BlockCollections(ctx),
+	}
 	if !render.AlignSources(ctx) {
-		return renderMap(ctx, w, r.s, data, "", 0, false)
+		return renderMap(ctx, w, r.s, data, "", 0, opts)
 	}
 	// Two-pass: render with annotation markers, then align.
+	opts.align = true
 	var buf bytes.Buffer
-	if err := renderMap(ctx, &buf, r.s, data, "", 0, true); err != nil {
+	if err := renderMap(ctx, &buf, r.s, data, "", 0, opts); err != nil {
 		return err
 	}
 	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-//nolint:gocognit,cyclop // complex recursive renderer, intentional
-func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix string, indent int, align bool) error {
+func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix string, indent int, opts yamlRenderOpts) error {
 	keys := render.OrderedKeys(ctx, prefix, data)
-
 	pad := strings.Repeat("  ", indent)
-	tty, _ := render.TTYSizeKey.Read(ctx)
-	cols := tty.Cols
-	forceBlock := render.BlockCollections(ctx)
 
 	for _, k := range keys {
 		v := data[k]
@@ -144,7 +153,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 
 		if sub, ok := v.(kongfig.ConfigData); ok {
 			var buf bytes.Buffer
-			if err := renderMap(ctx, &buf, s, sub, path, indent+1, align); err != nil {
+			if err := renderMap(ctx, &buf, s, sub, path, indent+1, opts); err != nil {
 				return err
 			}
 			if buf.Len() > 0 {
@@ -156,67 +165,75 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 			continue
 		}
 
-		// Unwrap RenderedValue
-		rv, isRV := v.(kongfig.RenderedValue)
-
-		if help := render.HelpText(ctx, path); help != "" {
-			fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
+		if err := renderYAMLLeaf(ctx, w, s, k, v, path, pad, opts); err != nil {
+			return err
 		}
-
-		// Determine the raw leaf value (for collection type dispatch).
-		var rawVal any
-		if isRV {
-			rawVal = rv.Value
-		} else {
-			rawVal = v
-		}
-
-		// Collections (slices, maps) use YAML-native syntax and switch to block
-		// style when the inline form would exceed the terminal width.
-		var formatted string
-		var useBlock bool
-		if !isRV || !rv.Redacted {
-			switch {
-			case isYAMLCollection(rawVal):
-				inline := yamlFlowValue(rawVal)
-				keyW := render.VisualWidth(s.Key(k))
-				if forceBlock || (cols > 0 && len(pad)+keyW+2+render.VisualWidth(inline) > cols) {
-					useBlock = true
-				} else {
-					formatted = inline
-				}
-			case isRV:
-				formatted = fmt.Sprintf("%v", rv.Value)
-			default:
-				formatted = fmt.Sprintf("%v", v)
-			}
-		}
-
-		if useBlock {
-			// Block form: annotation goes above the key line.
-			if isRV {
-				if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-					fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+ann)
-				}
-			}
-			fmt.Fprintf(w, "%s%s:\n", pad, s.Key(k))
-			renderYAMLCollection(w, s, rawVal, pad+"  ")
-			continue
-		}
-
-		line := fmt.Sprintf("%s%s: %s", pad, s.Key(k), render.Value(s, v, formatted))
-		if isRV {
-			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-				if align {
-					line += render.AnnMarker + "  " + s.Comment("# ") + ann
-				} else {
-					line += "  " + s.Comment("# ") + ann
-				}
-			}
-		}
-		fmt.Fprintln(w, line)
 	}
 	return nil
+}
+
+func renderYAMLLeaf(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path, pad string, opts yamlRenderOpts) error {
+	rv, isRV := v.(kongfig.RenderedValue)
+	var rawVal any
+	if isRV {
+		rawVal = rv.Value
+	} else {
+		rawVal = v
+	}
+
+	if help := render.HelpText(ctx, path); help != "" {
+		fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
+	}
+
+	formatted, useBlock := resolveYAMLLeafFormat(rv, isRV, rawVal, k, pad, s, opts)
+
+	if useBlock {
+		if isRV {
+			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+				fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+ann)
+			}
+		}
+		fmt.Fprintf(w, "%s%s:\n", pad, s.Key(k))
+		renderYAMLCollection(w, s, rawVal, pad+"  ")
+		return nil
+	}
+
+	line := fmt.Sprintf("%s%s: %s", pad, s.Key(k), render.Value(s, v, formatted))
+	if isRV {
+		line += yamlAnnSuffix(ctx, rv, path, s, opts.align)
+	}
+	fmt.Fprintln(w, line)
+	return nil
+}
+
+func resolveYAMLLeafFormat(rv kongfig.RenderedValue, isRV bool, rawVal any, k, pad string, s kongfig.Styler, opts yamlRenderOpts) (formatted string, useBlock bool) {
+	if isRV && rv.Redacted {
+		return "", false
+	}
+	switch {
+	case isYAMLCollection(rawVal):
+		inline := yamlFlowValue(rawVal)
+		keyW := render.VisualWidth(s.Key(k))
+		if opts.forceBlock || (opts.cols > 0 && len(pad)+keyW+2+render.VisualWidth(inline) > opts.cols) {
+			return "", true
+		}
+		return inline, false
+	case isRV:
+		return fmt.Sprintf("%v", rv.Value), false
+	default:
+		return fmt.Sprintf("%v", rawVal), false
+	}
+}
+
+func yamlAnnSuffix(ctx context.Context, rv kongfig.RenderedValue, path string, s kongfig.Styler, align bool) string {
+	ann := render.Annotation(ctx, rv, path, s)
+	if ann == "" {
+		return ""
+	}
+	if align {
+		return render.AnnMarker + "  " + s.Comment("# ") + ann
+	}
+	return "  " + s.Comment("# ") + ann
 }
 
 // isYAMLCollection reports whether v is a slice or map that deserves
@@ -279,7 +296,9 @@ func renderYAMLCollection(w io.Writer, s kongfig.Styler, v any, pad string) {
 
 // renderYAMLNode renders a YAML AST node in block form with styled keys/values.
 func renderYAMLNode(w io.Writer, s kongfig.Styler, node *goyaml.Node, pad string) {
-	switch node.Kind { //nolint:exhaustive // DocumentNode/ScalarNode/AliasNode don't appear as collection children
+	switch node.Kind {
+	case goyaml.DocumentNode, goyaml.ScalarNode, goyaml.AliasNode:
+		// these node types don't appear as direct children of collection nodes
 	case goyaml.SequenceNode:
 		for _, elem := range node.Content {
 			switch elem.Kind {

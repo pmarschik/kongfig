@@ -149,8 +149,12 @@ func TestTagEnv(t *testing.T) {
 }
 
 func TestTagEnvMissing(t *testing.T) {
-	os.Unsetenv("TEST_HOST")
-	os.Unsetenv("TEST_LOG_LEVEL")
+	if err := os.Unsetenv("TEST_HOST"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Unsetenv("TEST_LOG_LEVEL"); err != nil {
+		t.Fatal(err)
+	}
 
 	p := structsprovider.TagEnv[serverConfig]()
 	data, err := p.Load(context.Background())

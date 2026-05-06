@@ -560,9 +560,16 @@ func lenOf(v any) (int, bool) {
 	if !rv.IsValid() {
 		return 0, false
 	}
-	switch rv.Kind() { //nolint:exhaustive // intentional: only slice/array/map have a meaningful length here
+	switch rv.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Map:
 		return rv.Len(), true
+	case reflect.Invalid, reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128,
+		reflect.Chan, reflect.Func, reflect.Interface,
+		reflect.Pointer, reflect.String, reflect.Struct, reflect.UnsafePointer:
+		// non-container kind: no meaningful length
 	}
 	return 0, false
 }

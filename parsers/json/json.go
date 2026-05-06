@@ -116,27 +116,31 @@ type renderer struct {
 
 func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigData) error {
 	if !render.AlignSources(ctx) {
-		fmt.Fprintln(w, r.s.Syntax("{"))
+		if _, err := fmt.Fprintln(w, r.s.Syntax("{")); err != nil {
+			return err
+		}
 		if err := renderMap(ctx, w, r.s, r.p, data, "", 1, false); err != nil {
 			return err
 		}
-		fmt.Fprintln(w, r.s.Syntax("}"))
-		return nil
+		_, err := fmt.Fprintln(w, r.s.Syntax("}"))
+		return err
 	}
 	// Two-pass: render with annotation markers, then align.
 	var buf bytes.Buffer
-	fmt.Fprintln(&buf, r.s.Syntax("{"))
+	if _, err := fmt.Fprintln(&buf, r.s.Syntax("{")); err != nil {
+		return err
+	}
 	if err := renderMap(ctx, &buf, r.s, r.p, data, "", 1, true); err != nil {
 		return err
 	}
-	fmt.Fprintln(&buf, r.s.Syntax("}"))
+	if _, err := fmt.Fprintln(&buf, r.s.Syntax("}")); err != nil {
+		return err
+	}
 	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-//nolint:gocognit // complex recursive renderer, intentional
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, data kongfig.ConfigData, prefix string, depth int, align bool) error {
 	keys := render.OrderedKeys(ctx, prefix, data)
-
 	pad := strings.Repeat(p.indent(), depth)
 
 	for i, k := range keys {
@@ -151,47 +155,68 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, dat
 		}
 
 		if sub, ok := v.(kongfig.ConfigData); ok {
-			var buf bytes.Buffer
-			if err := renderMap(ctx, &buf, s, p, sub, path, depth+1, align); err != nil {
+			if err := renderJSONSubMap(ctx, w, s, p, k, sub, path, pad, comma, depth, align); err != nil {
 				return err
-			}
-			if buf.Len() > 0 {
-				fmt.Fprintf(w, "%s%s: %s\n", pad, s.Key(`"`+k+`"`), s.Syntax("{"))
-				if _, err := buf.WriteTo(w); err != nil {
-					return err
-				}
-				fmt.Fprintf(w, "%s%s\n", pad, s.Syntax("}")+comma)
 			}
 			continue
 		}
 
-		// Unwrap RenderedValue
-		rv, isRV := v.(kongfig.RenderedValue)
-		var leafVal any
-		if isRV {
-			leafVal = rv.Value
-		} else {
-			leafVal = v
+		if err := renderJSONLeaf(ctx, w, s, p, k, v, path, pad, comma, align); err != nil {
+			return err
 		}
-
-		if help := render.HelpText(ctx, path); help != "" {
-			fmt.Fprintf(w, "%s%s\n", pad, s.Comment("// "+help))
-		}
-
-		valBytes, _ := json.Marshal(leafVal) //nolint:errcheck // Marshal of already-valid data cannot fail
-		line := fmt.Sprintf("%s%s: %s%s", pad, s.Key(`"`+k+`"`), render.Value(s, v, string(valBytes)), comma)
-		if p.Comments && isRV {
-			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-				if align {
-					line += render.AnnMarker + "  " + s.Comment("// ") + ann
-				} else {
-					line += "  " + s.Comment("// ") + ann
-				}
-			}
-		}
-		fmt.Fprintln(w, line)
 	}
 	return nil
+}
+
+func renderJSONSubMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, k string, sub kongfig.ConfigData, path, pad, comma string, depth int, align bool) error {
+	var buf bytes.Buffer
+	if err := renderMap(ctx, &buf, s, p, sub, path, depth+1, align); err != nil {
+		return err
+	}
+	if buf.Len() == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "%s%s: %s\n", pad, s.Key(`"`+k+`"`), s.Syntax("{")); err != nil {
+		return err
+	}
+	if _, err := buf.WriteTo(w); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "%s%s\n", pad, s.Syntax("}")+comma)
+	return err
+}
+
+func renderJSONLeaf(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, k string, v any, path, pad, comma string, align bool) error {
+	rv, isRV := v.(kongfig.RenderedValue)
+	var leafVal any
+	if isRV {
+		leafVal = rv.Value
+	} else {
+		leafVal = v
+	}
+
+	if help := render.HelpText(ctx, path); help != "" {
+		if _, err := fmt.Fprintf(w, "%s%s\n", pad, s.Comment("// "+help)); err != nil {
+			return err
+		}
+	}
+
+	valBytes, err := json.Marshal(leafVal)
+	if err != nil {
+		return fmt.Errorf("json render: marshal key %q: %w", k, err)
+	}
+	line := fmt.Sprintf("%s%s: %s%s", pad, s.Key(`"`+k+`"`), render.Value(s, v, string(valBytes)), comma)
+	if p.Comments && isRV {
+		if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+			if align {
+				line += render.AnnMarker + "  " + s.Comment("// ") + ann
+			} else {
+				line += "  " + s.Comment("// ") + ann
+			}
+		}
+	}
+	_, err = fmt.Fprintln(w, line)
+	return err
 }
 
 // UnmarshalWithKeyOrder decodes JSON bytes and also returns the key insertion order
@@ -292,45 +317,56 @@ func jsonDecodeValue(dec *json.Decoder, path string) (val any, order map[string]
 
 // stripComments removes // line comments and /* */ block comments from JSON bytes,
 // leaving string literals intact.
-func stripComments(b []byte) []byte { //nolint:gocognit,cyclop // complex state-machine parser, intentional
+func stripComments(b []byte) []byte {
 	out := make([]byte, 0, len(b))
 	i := 0
 	for i < len(b) {
-		if b[i] == '"' {
+		switch {
+		case b[i] == '"':
+			i, out = consumeJSONString(b, i, out)
+		case i+1 < len(b) && b[i] == '/' && b[i+1] == '/':
+			i = skipLineComment(b, i)
+		case i+1 < len(b) && b[i] == '/' && b[i+1] == '*':
+			i = skipBlockComment(b, i)
+		default:
 			out = append(out, b[i])
 			i++
-			for i < len(b) {
-				c := b[i]
-				out = append(out, c)
-				i++
-				if c == '\\' && i < len(b) {
-					out = append(out, b[i])
-					i++
-				} else if c == '"' {
-					break
-				}
-			}
-			continue
 		}
-		if i+1 < len(b) && b[i] == '/' && b[i+1] == '/' {
-			for i < len(b) && b[i] != '\n' {
-				i++
-			}
-			continue
-		}
-		if i+1 < len(b) && b[i] == '/' && b[i+1] == '*' {
-			i += 2
-			for i+1 < len(b) {
-				if b[i] == '*' && b[i+1] == '/' {
-					i += 2
-					break
-				}
-				i++
-			}
-			continue
-		}
-		out = append(out, b[i])
-		i++
 	}
 	return out
+}
+
+func consumeJSONString(b []byte, i int, out []byte) (end int, result []byte) {
+	out = append(out, b[i])
+	i++
+	for i < len(b) {
+		c := b[i]
+		out = append(out, c)
+		i++
+		if c == '\\' && i < len(b) {
+			out = append(out, b[i])
+			i++
+		} else if c == '"' {
+			break
+		}
+	}
+	return i, out
+}
+
+func skipLineComment(b []byte, i int) int {
+	for i < len(b) && b[i] != '\n' {
+		i++
+	}
+	return i
+}
+
+func skipBlockComment(b []byte, i int) int {
+	i += 2
+	for i+1 < len(b) {
+		if b[i] == '*' && b[i+1] == '/' {
+			return i + 2
+		}
+		i++
+	}
+	return i
 }

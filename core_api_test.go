@@ -429,8 +429,9 @@ func TestWatch_OnChangeCalledOnReload(t *testing.T) {
 	k.AddWatcher(wp)
 
 	go func() {
-		//nolint:errcheck // canceled at test end
-		_ = k.Watch(ctx)
+		if err := k.Watch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			panic("unexpected Watch error: " + err.Error())
+		}
 	}()
 
 	wp.ch <- kongfig.ConfigData{"live": "reload"}
@@ -459,8 +460,9 @@ func TestWatch_MultipleOnChangeCallbacks(t *testing.T) {
 	k.AddWatcher(wp)
 
 	go func() {
-		//nolint:errcheck // canceled at test end
-		_ = k.Watch(ctx)
+		if err := k.Watch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			panic("unexpected Watch error: " + err.Error())
+		}
 	}()
 
 	wp.ch <- kongfig.ConfigData{"x": 1}

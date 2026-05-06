@@ -135,7 +135,9 @@ func (k *Kongfig) RenderLayers(ctx context.Context, fn func(ctx context.Context,
 		// Preserve the original layer's SourceID so per-layer RenderedValue.Source.Layer.ID
 		// matches the keys in PathFieldNames (built from the original providers).
 		// Without this, flag/env field name lookups fail with "(no flag binding)".
-		_ = layerKf.LoadParsed(layer.Data, layer.Meta.Name, withLayerSourceID(layer.Meta.ID)) //nolint:errcheck // in-memory data, never errors
+		if err := layerKf.LoadParsed(layer.Data, layer.Meta.Name, withLayerSourceID(layer.Meta.ID)); err != nil {
+			return err
+		}
 		layerData, layerCtx := prepareRender(enrichedCtx, layerKf, WithRenderFilterSource(nil))
 		// For per-layer rendering, file key order overrides struct field order.
 		if len(layer.KeyOrder) > 0 {

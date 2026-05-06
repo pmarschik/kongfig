@@ -71,26 +71,11 @@ func (k *Kongfig) OnChange(fn ChangeFunc) {
 //
 // If the provider is not found in the pipeline (e.g. AddWatcher called before Load),
 // it falls back to LoadParsed to preserve the previous append-only behavior.
-func (k *Kongfig) reloadEntry(w watchEntry, rawData ConfigData) error { //nolint:cyclop,funlen // pipeline replay: orchestrates normalize→rename→codec→find→replay→hook→commit in one function
+func (k *Kongfig) reloadEntry(w watchEntry, rawData ConfigData) error {
 	// Apply the same per-layer transforms that commitLayer applies to new provider data.
-	data := normalizeConfigData(rawData)
-	var renameWarnings []string
-	var renameErr error
-	data, renameWarnings, renameErr = k.applyRenames(data, w.source, "")
-	if renameErr != nil {
-		return renameErr
-	}
-	var err error
-	data, err = applyBidirectionalCodecs(k, data)
+	data, renameWarnings, keyOrder, err := k.applyWatchTransforms(rawData, w.source, w.provider)
 	if err != nil {
 		return err
-	}
-
-	var keyOrder map[string][]string
-	if kop, ok := w.provider.(KeyOrderProvider); ok {
-		if ko := kop.KeyOrder(); len(ko) > 0 {
-			keyOrder = ko
-		}
 	}
 
 	// Find the last pipeline entry for this source and update its snapshot.
@@ -162,6 +147,26 @@ func (k *Kongfig) reloadEntry(w watchEntry, rawData ConfigData) error { //nolint
 	k.mu.Unlock()
 
 	return nil
+}
+
+// applyWatchTransforms applies normalize, rename, codec, and key-order extraction
+// to raw provider data — the same transforms that commitLayer applies on initial Load.
+func (k *Kongfig) applyWatchTransforms(rawData ConfigData, source string, provider WatchProvider) (data ConfigData, renameWarnings []string, keyOrder map[string][]string, err error) {
+	data = normalizeConfigData(rawData)
+	data, renameWarnings, err = k.applyRenames(data, source, "")
+	if err != nil {
+		return data, renameWarnings, keyOrder, err
+	}
+	data, err = applyBidirectionalCodecs(k, data)
+	if err != nil {
+		return data, renameWarnings, keyOrder, err
+	}
+	if kop, ok := provider.(KeyOrderProvider); ok {
+		if ko := kop.KeyOrder(); len(ko) > 0 {
+			keyOrder = ko
+		}
+	}
+	return data, renameWarnings, keyOrder, err
 }
 
 // fireOnChange copies the onChange slice under RLock and calls each handler.

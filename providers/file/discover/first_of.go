@@ -6,12 +6,10 @@ import (
 )
 
 // firstOfDiscoverer tries sub-discoverers in order and returns the first non-empty result.
-//
-//nolint:govet // fieldalignment: mu before winner groups non-pointer fields; intentional
 type firstOfDiscoverer struct {
-	mu          sync.Mutex
-	winner      innerDiscoverer // set by the most recent Discover call that found a file
+	winner      innerDiscoverer
 	discoverers []innerDiscoverer
+	mu          sync.Mutex
 }
 
 // FirstOf returns a Discoverer that tries each sub-discoverer in order and

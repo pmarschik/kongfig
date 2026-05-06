@@ -200,8 +200,9 @@ func TestWatch(t *testing.T) {
 	k.AddWatcher(wp)
 
 	go func() {
-		//nolint:errcheck // Watch returns ctx.Err on cancel; ignored in test
-		_ = k.Watch(ctx)
+		if err := k.Watch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			panic("unexpected Watch error: " + err.Error())
+		}
 	}()
 
 	wp.ch <- kongfig.ConfigData{"live": "yes"}
@@ -1097,8 +1098,9 @@ func TestWatch_DeriveReplaysOnReload(t *testing.T) {
 	k.AddWatcher(wp)
 
 	go func() {
-		//nolint:errcheck // Watch returns ctx.Err on cancel; ignored in test
-		_ = k.Watch(ctx)
+		if err := k.Watch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			panic("unexpected Watch error: " + err.Error())
+		}
 	}()
 
 	wp.ch <- kongfig.ConfigData{"value": int64(5)}
@@ -1150,8 +1152,9 @@ func TestWatch_DeriveSeesOnlyPrecedingLayers(t *testing.T) {
 	k.AddWatcher(wpA)
 
 	go func() {
-		//nolint:errcheck // Watch returns ctx.Err on cancel; ignored in test
-		_ = k.Watch(ctx)
+		if err := k.Watch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			panic("unexpected Watch error: " + err.Error())
+		}
 	}()
 
 	wpA.ch <- kongfig.ConfigData{"value": int64(2)}

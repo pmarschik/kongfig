@@ -12,15 +12,12 @@ import (
 )
 
 // Provider loads a config file using a Parser.
-//
-//nolint:govet // fieldalignment: lastKeyOrder adds an 8-byte map to a 64-byte struct; layout is intentional
 type Provider struct {
-	parser      kongfig.Parser
-	path        string
-	source      string // optional override set by Discover; falls back to path
-	displayPath string // optional human-readable path set by Discover (e.g. "$XDG_CONFIG_HOME/...")
-	// lastKeyOrder caches the key insertion order from the most recent Load call.
+	parser       kongfig.Parser
 	lastKeyOrder map[string][]string
+	path         string
+	source       string
+	displayPath  string
 }
 
 // New returns a Provider (and ByteProvider) that loads the file at path using parser.

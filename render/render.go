@@ -56,74 +56,21 @@ func AlignAnnotationsCtx(ctx context.Context, raw string, w io.Writer) error {
 	return writeAlignedAnnotations(raw, w, tty.Cols)
 }
 
-//nolint:gocognit,cyclop // multi-pass annotation layout algorithm, intentional
+// annEntry holds parsed content and annotation for one output line.
+type annEntry struct {
+	content string
+	ann     string
+	vw      int
+	annVW   int
+}
+
 func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	parsed := parseAnnEntries(lines)
+	above := computeAboveFlags(parsed, cols)
+	maxInlineVW, maxAnnVW := computeAlignWidths(parsed, above)
 
-	type entry struct {
-		content string
-		ann     string
-		vw      int
-		annVW   int
-	}
-	parsed := make([]entry, len(lines))
-	for i, line := range lines {
-		parts := strings.SplitN(line, AnnMarker, 2)
-		e := entry{content: parts[0]}
-		if len(parts) == 2 {
-			e.ann = parts[1]
-		}
-		e.vw = VisualWidth(e.content)
-		if e.ann != "" {
-			e.annVW = VisualWidth(e.ann)
-		}
-		parsed[i] = e
-	}
-
-	// Per-line decision: a line's annotation goes above when the line itself
-	// (without alignment padding) would overflow the terminal.
-	above := make([]bool, len(parsed))
-	for i, e := range parsed {
-		if e.ann != "" {
-			above[i] = cols > 0 && e.vw+1+e.annVW > cols
-		}
-	}
-
-	// Max content width for inline-annotated lines (alignment target).
-	maxInlineVW := 0
-	for i, e := range parsed {
-		if e.ann != "" && !above[i] && e.vw > maxInlineVW {
-			maxInlineVW = e.vw
-		}
-	}
-
-	// Re-check: alignment padding may push a line over the terminal limit.
-	for i, e := range parsed {
-		if e.ann == "" || above[i] {
-			continue
-		}
-		if cols > 0 && maxInlineVW+1+e.annVW > cols {
-			above[i] = true
-		}
-	}
-
-	// Recompute after re-check (some lines may have moved above).
-	maxInlineVW = 0
-	maxAnnVW := 0
-	for i, e := range parsed {
-		if e.ann != "" && !above[i] {
-			if e.vw > maxInlineVW {
-				maxInlineVW = e.vw
-			}
-			if e.annVW > maxAnnVW {
-				maxAnnVW = e.annVW
-			}
-		}
-	}
-
-	// Annotation start column: when the terminal is wide enough, push annotations
-	// to the right edge so the longest one ends at cols. Otherwise fall back to
-	// immediately after the longest content.
+	// Push annotations to the right edge when the terminal is wide enough.
 	alignCol := maxInlineVW + 1
 	if cols > 0 {
 		if rightCol := cols - maxAnnVW; rightCol > alignCol {
@@ -144,6 +91,66 @@ func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 		}
 	}
 	return nil
+}
+
+func parseAnnEntries(lines []string) []annEntry {
+	parsed := make([]annEntry, len(lines))
+	for i, line := range lines {
+		parts := strings.SplitN(line, AnnMarker, 2)
+		e := annEntry{content: parts[0]}
+		if len(parts) == 2 {
+			e.ann = parts[1]
+		}
+		e.vw = VisualWidth(e.content)
+		if e.ann != "" {
+			e.annVW = VisualWidth(e.ann)
+		}
+		parsed[i] = e
+	}
+	return parsed
+}
+
+// computeAboveFlags decides, for each annotated line, whether the annotation
+// should appear above (true) or inline (false). A line goes above when it alone
+// would overflow the terminal, or when alignment padding would push it over.
+func computeAboveFlags(parsed []annEntry, cols int) []bool {
+	above := make([]bool, len(parsed))
+	for i, e := range parsed {
+		if e.ann != "" {
+			above[i] = cols > 0 && e.vw+1+e.annVW > cols
+		}
+	}
+	// Max content width among currently-inline lines (tentative alignment target).
+	maxInlineVW := 0
+	for i, e := range parsed {
+		if e.ann != "" && !above[i] && e.vw > maxInlineVW {
+			maxInlineVW = e.vw
+		}
+	}
+	// Re-check: alignment padding may push additional lines over the limit.
+	for i, e := range parsed {
+		if e.ann == "" || above[i] {
+			continue
+		}
+		if cols > 0 && maxInlineVW+1+e.annVW > cols {
+			above[i] = true
+		}
+	}
+	return above
+}
+
+func computeAlignWidths(parsed []annEntry, above []bool) (maxInlineVW, maxAnnVW int) {
+	for i, e := range parsed {
+		if e.ann != "" && !above[i] {
+			if e.vw > maxInlineVW {
+				maxInlineVW = e.vw
+			}
+			if e.annVW > maxAnnVW {
+				maxAnnVW = e.annVW
+			}
+		}
+	}
+	return maxInlineVW, maxAnnVW
 }
 
 // leadingWhitespace returns the leading spaces/tabs from s.
@@ -349,8 +356,14 @@ func WithTTYSizeCtx(ctx context.Context, cols, rows int) context.Context {
 // when at least one variable is set to a positive integer; the other
 // field defaults to 0. Returns (TTYSize{}, false) when neither is set.
 func TTYSizeFromEnv() (TTYSize, bool) {
-	cols, _ := strconv.Atoi(os.Getenv("COLUMNS")) //nolint:errcheck // 0 on parse failure is the desired default
-	rows, _ := strconv.Atoi(os.Getenv("ROWS"))    //nolint:errcheck // 0 on parse failure is the desired default
+	cols := 0
+	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil {
+		cols = n
+	}
+	rows := 0
+	if n, err := strconv.Atoi(os.Getenv("ROWS")); err == nil {
+		rows = n
+	}
 	if cols <= 0 && rows <= 0 {
 		return TTYSize{}, false
 	}

@@ -232,7 +232,6 @@ func resolveEnvKey(ctx context.Context, path, generated string, v any, sid kongf
 	return generated, envKeyComment
 }
 
-//nolint:gocognit,cyclop // complex recursive renderer, intentional
 func renderEnvMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, envPrefix, pathPrefix string, align bool) error {
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -241,7 +240,6 @@ func renderEnvMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongf
 	sort.Strings(keys)
 
 	noComments := render.NoComments(ctx)
-
 	for _, k := range keys {
 		v := data[k]
 		path := k
@@ -249,65 +247,69 @@ func renderEnvMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongf
 			path = pathPrefix + "." + k
 		}
 		generated := envPrefix + strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(k))
-
-		// Unwrap RenderedValue to get actual leaf value and source info.
-		rv, isRV := v.(kongfig.RenderedValue)
-		var leafVal any
-		if isRV {
-			leafVal = rv.Value
-		} else {
-			leafVal = v
+		if err := renderEnvEntry(ctx, w, s, v, path, generated, noComments, align); err != nil {
+			return err
 		}
-
-		var sid kongfig.SourceID
-		if isRV {
-			sid = rv.Source.Layer.ID
-		}
-		envKey, result := resolveEnvKey(ctx, path, generated, leafVal, sid)
-
-		// Unbound parent map: recurse directly, skipping the source filter
-		// (children carry their own provenance).
-		if result == envKeyRecurse {
-			if sub, ok := leafVal.(kongfig.ConfigData); ok {
-				if err := renderEnvMap(ctx, w, s, sub, envKey+"_", path, align); err != nil {
-					return err
-				}
-			}
-			continue
-		}
-
-		// Unbound leaf: render as comment after filter check.
-		if result == envKeyComment {
-			fmt.Fprintln(w, s.Comment("# "+path+"="+fmt.Sprintf("%v", leafVal)+"  # (no env binding)"))
-			continue
-		}
-
-		// Bound sub-map (env var names has an explicit key for this path).
-		if sub, ok := leafVal.(kongfig.ConfigData); ok {
-			if err := renderEnvMap(ctx, w, s, sub, envKey+"_", path, align); err != nil {
-				return err
-			}
-			continue
-		}
-
-		var line string
-		if isRV && rv.Redacted {
-			line = "export " + s.Key(envKey) + "=" + s.Redacted(rv.RedactedDisplay)
-		} else {
-			line = "export " + s.Key(envKey) + "=" + renderLeafValue(ctx, s, leafVal, path)
-		}
-		if !noComments && isRV {
-			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-				if align {
-					line += render.AnnMarker + "  " + s.Comment("# ") + ann
-				} else {
-					line += "  " + s.Comment("# ") + ann
-				}
-			}
-		}
-		fmt.Fprintln(w, line)
 	}
 	return nil
+}
+
+func renderEnvEntry(ctx context.Context, w io.Writer, s kongfig.Styler, v any, path, generated string, noComments, align bool) error {
+	rv, isRV := v.(kongfig.RenderedValue)
+	var leafVal any
+	if isRV {
+		leafVal = rv.Value
+	} else {
+		leafVal = v
+	}
+
+	var sid kongfig.SourceID
+	if isRV {
+		sid = rv.Source.Layer.ID
+	}
+	envKey, result := resolveEnvKey(ctx, path, generated, leafVal, sid)
+
+	if result == envKeyRecurse {
+		if sub, ok := leafVal.(kongfig.ConfigData); ok {
+			return renderEnvMap(ctx, w, s, sub, envKey+"_", path, align)
+		}
+		return nil
+	}
+
+	if result == envKeyComment {
+		_, err := fmt.Fprintln(w, s.Comment("# "+path+"="+fmt.Sprintf("%v", leafVal)+"  # (no env binding)"))
+		return err
+	}
+
+	if sub, ok := leafVal.(kongfig.ConfigData); ok {
+		return renderEnvMap(ctx, w, s, sub, envKey+"_", path, align)
+	}
+	return renderEnvLeaf(ctx, w, s, envKey, rv, isRV, leafVal, path, noComments, align)
+}
+
+func renderEnvLeaf(ctx context.Context, w io.Writer, s kongfig.Styler, envKey string, rv kongfig.RenderedValue, isRV bool, leafVal any, path string, noComments, align bool) error {
+	var line string
+	if isRV && rv.Redacted {
+		line = "export " + s.Key(envKey) + "=" + s.Redacted(rv.RedactedDisplay)
+	} else {
+		line = "export " + s.Key(envKey) + "=" + renderLeafValue(ctx, s, leafVal, path)
+	}
+	if !noComments && isRV {
+		line += envAnnSuffix(ctx, rv, path, s, align)
+	}
+	_, err := fmt.Fprintln(w, line)
+	return err
+}
+
+func envAnnSuffix(ctx context.Context, rv kongfig.RenderedValue, path string, s kongfig.Styler, align bool) string {
+	ann := render.Annotation(ctx, rv, path, s)
+	if ann == "" {
+		return ""
+	}
+	if align {
+		return render.AnnMarker + "  " + s.Comment("# ") + ann
+	}
+	return "  " + s.Comment("# ") + ann
 }
 
 // renderLeafValue formats a leaf config value for env output using a type switch.

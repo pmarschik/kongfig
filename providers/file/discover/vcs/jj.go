@@ -17,7 +17,7 @@ type jjRootDiscoverer struct{ opts }
 // root and then searches for config.<ext> there.
 //
 // Returns ("", nil) if jj is not installed or the directory is not inside a jj workspace.
-func JujutsuRoot(options ...Option) *jjRootDiscoverer { //nolint:revive // concrete type for method chaining
+func JujutsuRoot(options ...Option) *jjRootDiscoverer {
 	return &jjRootDiscoverer{resolveOpts(options)}
 }
 

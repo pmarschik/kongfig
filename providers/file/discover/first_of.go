@@ -26,7 +26,7 @@ type firstOfDiscoverer struct {
 //	// Try env-injected path first, then XDG, then workdir.
 //	d := discover.FirstOf(envOverride, discover.XDG(), discover.Workdir())
 //	p, err := file.Discover(ctx, d, yaml.Default)
-func FirstOf(discoverers ...innerDiscoverer) *firstOfDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func FirstOf(discoverers ...innerDiscoverer) *firstOfDiscoverer {
 	return &firstOfDiscoverer{discoverers: discoverers}
 }
 

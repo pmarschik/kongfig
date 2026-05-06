@@ -10,12 +10,12 @@ type compositeDiscoverer struct {
 }
 
 // Compose creates a compositeDiscoverer with the given name, dir provider, and file locator.
-func Compose(name string, dirs DirProvider, locate FileLocator) *compositeDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func Compose(name string, dirs DirProvider, locate FileLocator) *compositeDiscoverer {
 	return &compositeDiscoverer{name: name, dirs: dirs, locate: locate}
 }
 
 // ComposeAll creates one compositeDiscoverer per locator, sharing the same name and dir provider.
-func ComposeAll(baseName string, dirs DirProvider, locs ...FileLocator) []*compositeDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func ComposeAll(baseName string, dirs DirProvider, locs ...FileLocator) []*compositeDiscoverer {
 	out := make([]*compositeDiscoverer, len(locs))
 	for i, loc := range locs {
 		out[i] = Compose(baseName, dirs, loc)

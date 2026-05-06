@@ -122,6 +122,8 @@ linters:
       confidence: 0.8
       enable-default-rules: true
       rules:
+        - name: unexported-return
+          disabled: true  # builder pattern: concrete return types enable method chaining
         - name: early-return
           severity: warning
         - name: unnecessary-stmt

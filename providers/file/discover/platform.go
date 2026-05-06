@@ -56,7 +56,7 @@ type userDirsDiscoverer struct {
 //
 // The app name is read from ctx via [kongfig.AppName]. Returns no results if no
 // app name is set in ctx.
-func UserDirs() *userDirsDiscoverer { return &userDirsDiscoverer{} } //nolint:revive // returning concrete type allows callers to chain methods
+func UserDirs() *userDirsDiscoverer { return &userDirsDiscoverer{} }
 
 // WithNames sets the subdirectory filenames searched in [StyleSubdir] and [StyleBoth] modes.
 // Each name is tried as <base>/<app>/<name>.<ext>. Defaults to ["config"] when not set.
@@ -131,7 +131,7 @@ type systemDirsDiscoverer struct {
 //
 // The app name is read from ctx via [kongfig.AppName]. Returns no results if no
 // app name is set in ctx.
-func SystemDirs() *systemDirsDiscoverer { return &systemDirsDiscoverer{} } //nolint:revive // returning concrete type allows callers to chain methods
+func SystemDirs() *systemDirsDiscoverer { return &systemDirsDiscoverer{} }
 
 // WithNames sets the subdirectory filenames searched in [StyleSubdir] and [StyleBoth] modes.
 // Each name is tried as <base>/<app>/<name>.<ext>. Defaults to ["config"] when not set.

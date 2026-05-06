@@ -1079,14 +1079,17 @@ func TestWatch_DeriveReplaysOnReload(t *testing.T) {
 	mustLoad(t, k, wp)
 
 	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
-		n, _ := in.Data["value"].(int64) //nolint:errcheck // type assertion; zero value is correct default
+		var n int64
+		if v, ok := in.Data["value"].(int64); ok {
+			n = v
+		}
 		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"doubled": n * 2}}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if got, _ := k.All()["doubled"].(int64); got != 6 { //nolint:errcheck // type assertion; ok value intentionally discarded
-		t.Fatalf("initial doubled = %d, want 6", got)
+	if v := k.All()["doubled"]; v != int64(6) {
+		t.Fatalf("initial doubled = %v, want 6", v)
 	}
 
 	changed := make(chan struct{}, 1)
@@ -1106,8 +1109,8 @@ func TestWatch_DeriveReplaysOnReload(t *testing.T) {
 		t.Fatal("timeout waiting for OnChange")
 	}
 
-	if got, _ := k.All()["doubled"].(int64); got != 10 { //nolint:errcheck // type assertion; ok value intentionally discarded
-		t.Errorf("doubled after reload = %d, want 10", got)
+	if v := k.All()["doubled"]; v != int64(10) {
+		t.Errorf("doubled after reload = %v, want 10", v)
 	}
 }
 
@@ -1130,7 +1133,10 @@ func TestWatch_DeriveSeesOnlyPrecedingLayers(t *testing.T) {
 	var deriveInputData kongfig.ConfigData
 	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
 		deriveInputData = in.Data.Clone()
-		n, _ := in.Data["value"].(int64) //nolint:errcheck // type assertion; zero value is correct default
+		var n int64
+		if v, ok := in.Data["value"].(int64); ok {
+			n = v
+		}
 		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"doubled": n * 2}}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1156,8 +1162,8 @@ func TestWatch_DeriveSeesOnlyPrecedingLayers(t *testing.T) {
 		t.Fatal("timeout waiting for OnChange")
 	}
 
-	if got, _ := k.All()["doubled"].(int64); got != 4 { //nolint:errcheck // type assertion; ok value intentionally discarded
-		t.Errorf("doubled after reload = %d, want 4", got)
+	if v := k.All()["doubled"]; v != int64(4) {
+		t.Errorf("doubled after reload = %v, want 4", v)
 	}
 	if _, hasExtra := deriveInputData["extra"]; hasExtra {
 		t.Error("derive saw 'extra' (from source.b loaded after derive) — should only see preceding layers")

@@ -45,12 +45,12 @@ func findVCSRoot(start, marker string, maxDepth int) string {
 //
 // The app name is read from ctx via [kongfig.AppName]. Returns no results if no
 // app name is set in ctx.
-func XDG() *compositeDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func XDG() *compositeDiscoverer {
 	return Compose("xdg", XDGDirs(), LocateAppDir())
 }
 
 // Workdir returns a Discoverer that searches ./config.<ext>.
-func Workdir() *compositeDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func Workdir() *compositeDiscoverer {
 	return Compose("workdir", WorkdirDirs(), LocateConfigBase())
 }
 
@@ -63,7 +63,7 @@ func Workdir() *compositeDiscoverer { //nolint:revive // returning concrete type
 // (e.g. in /usr/local/bin) find config files next to the real binary.
 //
 // Returns ("", nil) if os.Executable fails or no config file is found.
-func ExecDir() *compositeDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func ExecDir() *compositeDiscoverer {
 	return Compose("execdir", ExecDirs(), LocateFirst(LocateAppFlat(), LocateConfigBase()))
 }
 
@@ -82,7 +82,7 @@ type vcsRootDiscoverer struct {
 // It walks up from the current directory looking for a .git entry (directory or file).
 // Returns ("", nil) if not inside a git repository within maxDepth parent directories.
 // maxDepth <= 0 uses the default (20).
-func GitRoot(maxDepth ...int) *vcsRootDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func GitRoot(maxDepth ...int) *vcsRootDiscoverer {
 	d := &vcsRootDiscoverer{marker: ".git", name: "git-root", short: "$git-root", long: "(git root)"}
 	if len(maxDepth) > 0 {
 		d.maxDepth = maxDepth[0]
@@ -94,7 +94,7 @@ func GitRoot(maxDepth ...int) *vcsRootDiscoverer { //nolint:revive // returning 
 // It walks up from the current directory looking for a .jj directory.
 // Returns ("", nil) if not inside a Jujutsu repository within maxDepth parent directories.
 // maxDepth <= 0 uses the default (20).
-func JujutsuRoot(maxDepth ...int) *vcsRootDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func JujutsuRoot(maxDepth ...int) *vcsRootDiscoverer {
 	d := &vcsRootDiscoverer{marker: ".jj", name: "jj-root", short: "$jj-root", long: "(jj root)"}
 	if len(maxDepth) > 0 {
 		d.maxDepth = maxDepth[0]
@@ -167,7 +167,7 @@ type explicitDiscoverer struct{ path string }
 // When parsers provide extensions via [ParserNamer], the file's extension must
 // match one of them; otherwise Discover returns empty (no error). Use [ExplicitBase]
 // when you know the location but want extension inference. Source label is "explicit.<format>".
-func Explicit(path string) *explicitDiscoverer { return &explicitDiscoverer{path: path} } //nolint:revive // returning concrete type allows callers to chain methods
+func Explicit(path string) *explicitDiscoverer { return &explicitDiscoverer{path: path} }
 
 func (*explicitDiscoverer) Name() string { return "explicit" }
 
@@ -191,7 +191,7 @@ type explicitBaseDiscoverer struct{ base string }
 //
 // Example: ExplicitBase("/etc/myapp/config") tries /etc/myapp/config.yaml,
 // /etc/myapp/config.toml, etc. depending on which parsers are passed.
-func ExplicitBase(base string) *explicitBaseDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func ExplicitBase(base string) *explicitBaseDiscoverer {
 	return &explicitBaseDiscoverer{base: base}
 }
 

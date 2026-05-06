@@ -16,7 +16,7 @@ type upwardDiscoverer struct {
 
 // UpwardFunc returns an upwardDiscoverer that uses the given FileLocator at each
 // directory level while walking upward.
-func UpwardFunc(match FileLocator) *upwardDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func UpwardFunc(match FileLocator) *upwardDiscoverer {
 	return &upwardDiscoverer{match: match}
 }
 
@@ -87,21 +87,21 @@ func (d *upwardDiscoverer) DisplayPath(ctx context.Context, foundPath string) st
 }
 
 // UpwardConfigBase returns an upwardDiscoverer that uses LocateConfigBase.
-func UpwardConfigBase() *upwardDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func UpwardConfigBase() *upwardDiscoverer {
 	return UpwardFunc(LocateConfigBase())
 }
 
 // UpwardAppDir returns an upwardDiscoverer that uses LocateAppDir.
-func UpwardAppDir() *upwardDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func UpwardAppDir() *upwardDiscoverer {
 	return UpwardFunc(LocateAppDir())
 }
 
 // UpwardAppFlat returns an upwardDiscoverer that uses LocateAppFlat.
-func UpwardAppFlat() *upwardDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func UpwardAppFlat() *upwardDiscoverer {
 	return UpwardFunc(LocateAppFlat())
 }
 
 // UpwardApp returns an upwardDiscoverer that tries LocateAppDir then LocateAppFlat.
-func UpwardApp() *upwardDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func UpwardApp() *upwardDiscoverer {
 	return UpwardFunc(LocateFirst(LocateAppDir(), LocateAppFlat()))
 }

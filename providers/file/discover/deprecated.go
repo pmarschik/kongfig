@@ -37,7 +37,7 @@ type deprecatedDiscoverer struct {
 //	file.Discover(ctx,
 //	    discover.Deprecated(discover.XDG(), "~/.config/myapp/config.yaml"),
 //	    yaml.Default)
-func Deprecated(d innerDiscoverer, preferredPath string, policy ...kongfig.MigrationPolicy) *deprecatedDiscoverer { //nolint:revive // returning concrete type allows callers to chain methods
+func Deprecated(d innerDiscoverer, preferredPath string, policy ...kongfig.MigrationPolicy) *deprecatedDiscoverer {
 	p := kongfig.DefaultMigrationPolicy
 	if len(policy) > 0 {
 		p = policy[0]

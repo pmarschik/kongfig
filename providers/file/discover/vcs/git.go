@@ -19,7 +19,7 @@ type gitRootDiscoverer struct{ opts }
 // Handles git worktrees (linked worktrees use a .git file pointing to commondir),
 // submodules (.git file pointing to parent repo's .git/modules/…), and bare repos.
 // Returns ("", nil) if the start directory is not inside a git repository.
-func GitRoot(options ...Option) *gitRootDiscoverer { //nolint:revive // concrete type for method chaining
+func GitRoot(options ...Option) *gitRootDiscoverer {
 	return &gitRootDiscoverer{resolveOpts(options)}
 }
 

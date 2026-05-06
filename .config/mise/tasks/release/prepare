@@ -89,15 +89,18 @@ for dir in "${MODULE_DIRS[@]}"; do
 done
 success "go.mod files updated"
 
-# ── update checksums (workspace members resolve locally, so this works pre-tag) ─
+# ── update checksums ──────────────────────────────────────────────────────────
+# Workspace members are resolved from local source, so sums can be computed
+# pre-tag. GONOSUMDB uses prefix matching: ROOT_MODULE covers itself and all
+# sub-modules (e.g. .../parsers/yaml), skipping the sum DB for unpublished versions.
 info "Updating go.work.sum…"
-go work sync
+GONOSUMDB="${ROOT_MODULE}" go work sync
 success "go.work.sum updated"
 
 info "Tidying go.sum files…"
 for dir in "${MODULE_DIRS[@]}"; do
   pushd "$dir" > /dev/null
-  go mod tidy
+  GONOSUMDB="${ROOT_MODULE}" go mod tidy
   popd > /dev/null
 done
 success "go.sum files updated"

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"sort"
@@ -160,7 +161,11 @@ func (f *Flags) Options(k *kongfig.Kongfig) []kongfig.RenderOption {
 // also valid when output is piped). Returns nil when no size can be determined.
 func autoTTYOpt(w io.Writer) kongfig.RenderOption {
 	if f, ok := w.(*os.File); ok {
-		fd := int(f.Fd()) //nolint:gosec // G115: fd values fit in int on all supported platforms
+		fdVal := f.Fd()
+		if fdVal > math.MaxInt {
+			panic("file descriptor value overflows int")
+		}
+		fd := int(fdVal)
 		if term.IsTerminal(fd) {
 			if cols, rows, err := term.GetSize(fd); err == nil {
 				return render.WithTTYSize(cols, rows)

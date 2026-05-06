@@ -114,23 +114,33 @@ type renderer struct {
 	p Parser
 }
 
+// jsonRenderOpts groups the per-Render options shared across all recursive
+// rendering functions.
+type jsonRenderOpts struct {
+	s     kongfig.Styler
+	p     Parser
+	align bool
+}
+
 func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigData) error {
+	opts := jsonRenderOpts{s: r.s, p: r.p}
 	if !render.AlignSources(ctx) {
 		if _, err := fmt.Fprintln(w, r.s.Syntax("{")); err != nil {
 			return err
 		}
-		if err := renderMap(ctx, w, r.s, r.p, data, "", 1, false); err != nil {
+		if err := renderMap(ctx, w, data, "", 1, opts); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(w, r.s.Syntax("}"))
 		return err
 	}
 	// Two-pass: render with annotation markers, then align.
+	opts.align = true
 	var buf bytes.Buffer
 	if _, err := fmt.Fprintln(&buf, r.s.Syntax("{")); err != nil {
 		return err
 	}
-	if err := renderMap(ctx, &buf, r.s, r.p, data, "", 1, true); err != nil {
+	if err := renderMap(ctx, &buf, data, "", 1, opts); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(&buf, r.s.Syntax("}")); err != nil {
@@ -139,9 +149,9 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, data kongfig.ConfigData, prefix string, depth int, align bool) error {
+func renderMap(ctx context.Context, w io.Writer, data kongfig.ConfigData, prefix string, depth int, opts jsonRenderOpts) error {
 	keys := render.OrderedKeys(ctx, prefix, data)
-	pad := strings.Repeat(p.indent(), depth)
+	pad := strings.Repeat(opts.p.indent(), depth)
 
 	for i, k := range keys {
 		v := data[k]
@@ -155,38 +165,38 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, dat
 		}
 
 		if sub, ok := v.(kongfig.ConfigData); ok {
-			if err := renderJSONSubMap(ctx, w, s, p, k, sub, path, pad, comma, depth, align); err != nil {
+			if err := renderJSONSubMap(ctx, w, k, sub, path, pad, comma, depth, opts); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if err := renderJSONLeaf(ctx, w, s, p, k, v, path, pad, comma, align); err != nil {
+		if err := renderJSONLeaf(ctx, w, k, v, path, pad, comma, opts); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func renderJSONSubMap(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, k string, sub kongfig.ConfigData, path, pad, comma string, depth int, align bool) error {
+func renderJSONSubMap(ctx context.Context, w io.Writer, k string, sub kongfig.ConfigData, path, pad, comma string, depth int, opts jsonRenderOpts) error {
 	var buf bytes.Buffer
-	if err := renderMap(ctx, &buf, s, p, sub, path, depth+1, align); err != nil {
+	if err := renderMap(ctx, &buf, sub, path, depth+1, opts); err != nil {
 		return err
 	}
 	if buf.Len() == 0 {
 		return nil
 	}
-	if _, err := fmt.Fprintf(w, "%s%s: %s\n", pad, s.Key(`"`+k+`"`), s.Syntax("{")); err != nil {
+	if _, err := fmt.Fprintf(w, "%s%s: %s\n", pad, opts.s.Key(`"`+k+`"`), opts.s.Syntax("{")); err != nil {
 		return err
 	}
 	if _, err := buf.WriteTo(w); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "%s%s\n", pad, s.Syntax("}")+comma)
+	_, err := fmt.Fprintf(w, "%s%s\n", pad, opts.s.Syntax("}")+comma)
 	return err
 }
 
-func renderJSONLeaf(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser, k string, v any, path, pad, comma string, align bool) error {
+func renderJSONLeaf(ctx context.Context, w io.Writer, k string, v any, path, pad, comma string, opts jsonRenderOpts) error {
 	rv, isRV := v.(kongfig.RenderedValue)
 	var leafVal any
 	if isRV {
@@ -196,7 +206,7 @@ func renderJSONLeaf(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser
 	}
 
 	if help := render.HelpText(ctx, path); help != "" {
-		if _, err := fmt.Fprintf(w, "%s%s\n", pad, s.Comment("// "+help)); err != nil {
+		if _, err := fmt.Fprintf(w, "%s%s\n", pad, opts.s.Comment("// "+help)); err != nil {
 			return err
 		}
 	}
@@ -205,13 +215,13 @@ func renderJSONLeaf(ctx context.Context, w io.Writer, s kongfig.Styler, p Parser
 	if err != nil {
 		return fmt.Errorf("json render: marshal key %q: %w", k, err)
 	}
-	line := fmt.Sprintf("%s%s: %s%s", pad, s.Key(`"`+k+`"`), render.Value(s, v, string(valBytes)), comma)
-	if p.Comments && isRV {
-		if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-			if align {
-				line += render.AnnMarker + "  " + s.Comment("// ") + ann
+	line := fmt.Sprintf("%s%s: %s%s", pad, opts.s.Key(`"`+k+`"`), render.Value(opts.s, v, string(valBytes)), comma)
+	if opts.p.Comments && isRV {
+		if ann := render.Annotation(ctx, rv, path, opts.s); ann != "" {
+			if opts.align {
+				line += render.AnnMarker + "  " + opts.s.Comment("// ") + ann
 			} else {
-				line += "  " + s.Comment("// ") + ann
+				line += "  " + opts.s.Comment("// ") + ann
 			}
 		}
 	}

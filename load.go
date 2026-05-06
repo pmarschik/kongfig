@@ -3,6 +3,7 @@ package kongfig
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"time"
 )
@@ -11,6 +12,17 @@ import (
 // extension values through to a [Provider.Load] call; use the With* constructors
 // for built-in options.
 type LoadOption func(*loadOptions)
+
+// pipelineEntry records one step in the ordered load/derive pipeline.
+// Provider entries carry the post-transform layer snapshot; derive entries carry
+// the registered function and the stable LayerMeta assigned on first run.
+// On watch reload, the full pipeline is replayed so derives always see the
+// accumulated state of the layers that precede them.
+type pipelineEntry struct {
+	fn       DeriveFn
+	layer    Layer
+	isDerive bool
+}
 
 type loadOptions struct {
 	parser           Parser
@@ -192,6 +204,73 @@ func (k *Kongfig) LoadParsed(data ConfigData, source string, opts ...LoadOption)
 	return k.commitLayer(data, source, inferKind(source), parserFormat(cfg.parser), cfg.parser, cfg.providerData, nil, cfg.keyOrder, cfg.overrideSourceID)
 }
 
+// replayPipeline rebuilds the merged configuration from scratch by replaying every
+// registered pipeline entry in order. Provider entries are merged using their stored
+// post-transform snapshot; derive entries re-run their function against the accumulated
+// state at that position in the pipeline.
+//
+// Returns the proposed (uncommitted) new state so callers can fire onLoad hooks and
+// decide whether to commit.
+func (k *Kongfig) replayPipeline() (ConfigData, *Provenance, []Layer, error) {
+	k.mu.RLock()
+	pipeline := make([]pipelineEntry, len(k.pipeline))
+	copy(pipeline, k.pipeline)
+	mergeFns := k.cfg.mergeFuncs
+	k.mu.RUnlock()
+
+	data := make(ConfigData)
+	prov := NewProvenance()
+	var layers []Layer
+
+	for i := range pipeline {
+		e := &pipeline[i]
+		if !e.isDerive {
+			sm := SourceMeta{Layer: e.layer.Meta}
+			delta := make(ConfigData)
+			data.mergeFrom(e.layer.Data.Clone(), sm, prov, mergeFns, delta, "")
+			layers = append(layers, e.layer)
+		} else {
+			out, err := e.fn(DeriveInput{Data: data.Clone(), Provenance: prov.clone()})
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			lm := e.layer.Meta
+			lm.Timestamp = time.Now()
+			sm := SourceMeta{Layer: lm}
+			derived := normalizeConfigData(out.Data)
+			disposableProv := prov.clone()
+			delta := make(ConfigData)
+			data.mergeFrom(derived, sm, disposableProv, mergeFns, delta, "")
+			for path := range delta {
+				prov.Set(path, sm)
+			}
+			layers = append(layers, Layer{Meta: lm, Data: unflattenDelta(delta)})
+		}
+	}
+
+	return data, prov, layers, nil
+}
+
+// pipelineStateDelta returns a flat ConfigData of keys whose values differ between
+// prev and next, used to build the LoadEvent.Delta when replaying on watch reload.
+func pipelineStateDelta(prev, next ConfigData) ConfigData {
+	delta := make(ConfigData)
+	nextFlat := next.FlatValues()
+	prevFlat := prev.FlatValues()
+	for path, nv := range nextFlat {
+		ov, ok := prevFlat[path]
+		if !ok || fmt.Sprintf("%v", ov) != fmt.Sprintf("%v", nv) {
+			delta[path] = nv
+		}
+	}
+	for path := range prevFlat {
+		if _, ok := nextFlat[path]; !ok {
+			delta[path] = nil
+		}
+	}
+	return delta
+}
+
 // parserFormat returns the format name from a parser if it implements ParserNamer, else "".
 func parserFormat(p Parser) string {
 	if p == nil {
@@ -288,11 +367,12 @@ func (k *Kongfig) commitLayer(data ConfigData, source, kind, format string, pars
 		return errors.Join(errs...)
 	}
 
-	// All hooks passed: commit proposed state and any non-fatal migration warnings.
+	// All hooks passed: commit proposed state, pipeline entry, and any non-fatal migration warnings.
 	k.mu.Lock()
 	k.data = proposed
 	k.prov = proposedProv
 	k.layers = append(k.layers, layer)
+	k.pipeline = append(k.pipeline, pipelineEntry{isDerive: false, layer: layer})
 	k.cfg.migrationWarnings = append(k.cfg.migrationWarnings, renameWarnings...)
 	k.mu.Unlock()
 
@@ -395,6 +475,9 @@ func (k *Kongfig) Derive(fn DeriveFn) error {
 	k.data = proposed
 	k.prov = proposedProv
 	k.layers = append(k.layers, layer)
+	// Register in pipeline so watch reloads replay the derive against the accumulated
+	// provider state at this position, not against stale derived values.
+	k.pipeline = append(k.pipeline, pipelineEntry{isDerive: true, fn: fn, layer: Layer{Meta: lm}})
 	k.mu.Unlock()
 
 	return nil

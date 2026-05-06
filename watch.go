@@ -2,7 +2,9 @@ package kongfig
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 )
 
 // WatchEvent is a sealed sum type representing a watch notification.
@@ -63,21 +65,103 @@ func (k *Kongfig) OnChange(fn ChangeFunc) {
 	k.hooks.onChange = append(k.hooks.onChange, fn)
 }
 
-// reloadEntry builds LoadParsed options from w and calls LoadParsed.
-func (k *Kongfig) reloadEntry(w watchEntry, data ConfigData) error {
-	var lopts []LoadOption
-	if w.parser != nil {
-		lopts = append(lopts, WithParser(w.parser))
+// reloadEntry applies transforms to the new data, updates the matching pipeline entry,
+// replays the full pipeline so derives re-run against the correct accumulated state,
+// fires onLoad hooks, and commits if all hooks pass.
+//
+// If the provider is not found in the pipeline (e.g. AddWatcher called before Load),
+// it falls back to LoadParsed to preserve the previous append-only behavior.
+func (k *Kongfig) reloadEntry(w watchEntry, rawData ConfigData) error { //nolint:cyclop,funlen // pipeline replay: orchestrates normalize→rename→codec→find→replay→hook→commit in one function
+	// Apply the same per-layer transforms that commitLayer applies to new provider data.
+	data := normalizeConfigData(rawData)
+	var renameWarnings []string
+	var renameErr error
+	data, renameWarnings, renameErr = k.applyRenames(data, w.source, "")
+	if renameErr != nil {
+		return renameErr
 	}
-	if w.data != nil {
-		lopts = append(lopts, WithProviderData(w.data))
+	var err error
+	data, err = applyBidirectionalCodecs(k, data)
+	if err != nil {
+		return err
 	}
+
+	var keyOrder map[string][]string
 	if kop, ok := w.provider.(KeyOrderProvider); ok {
 		if ko := kop.KeyOrder(); len(ko) > 0 {
-			lopts = append(lopts, withKeyOrder(ko))
+			keyOrder = ko
 		}
 	}
-	return k.LoadParsed(data, w.source, lopts...)
+
+	// Find the last pipeline entry for this source and update its snapshot.
+	k.mu.Lock()
+	pipelineIdx := -1
+	for i := len(k.pipeline) - 1; i >= 0; i-- {
+		if !k.pipeline[i].isDerive && k.pipeline[i].layer.Meta.Name == w.source {
+			pipelineIdx = i
+			break
+		}
+	}
+	if pipelineIdx >= 0 {
+		k.pipeline[pipelineIdx].layer.Data = data
+		k.pipeline[pipelineIdx].layer.Meta.Timestamp = time.Now()
+		if keyOrder != nil {
+			k.pipeline[pipelineIdx].layer.KeyOrder = keyOrder
+		}
+	}
+	oldData := k.data.Clone()
+	k.mu.Unlock()
+
+	// Fall back to append-only LoadParsed if provider is not in the pipeline.
+	if pipelineIdx < 0 {
+		var lopts []LoadOption
+		if w.parser != nil {
+			lopts = append(lopts, WithParser(w.parser))
+		}
+		if w.data != nil {
+			lopts = append(lopts, WithProviderData(w.data))
+		}
+		if keyOrder != nil {
+			lopts = append(lopts, withKeyOrder(keyOrder))
+		}
+		return k.LoadParsed(rawData, w.source, lopts...)
+	}
+
+	// Replay the full pipeline so derives re-run against the correct accumulated state.
+	newData, newProv, newLayers, err := k.replayPipeline()
+	if err != nil {
+		return err
+	}
+
+	// Fire onLoad hooks against the proposed state before committing.
+	k.mu.RLock()
+	reloadedLayer := k.pipeline[pipelineIdx].layer
+	hooks := make([]LoadFunc, len(k.hooks.onLoad))
+	copy(hooks, k.hooks.onLoad)
+	k.mu.RUnlock()
+
+	delta := pipelineStateDelta(oldData, newData)
+	eventLayer := reloadedLayer
+	eventLayer.Data = eventLayer.Data.Clone()
+	event := LoadEvent{Layer: eventLayer, Delta: delta, ProposedData: newData}
+	var errs []error
+	for _, h := range hooks {
+		if r := h(event); r.Err != nil {
+			errs = append(errs, r.Err)
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
+	k.mu.Lock()
+	k.data = newData
+	k.prov = newProv
+	k.layers = newLayers
+	k.cfg.migrationWarnings = append(k.cfg.migrationWarnings, renameWarnings...)
+	k.mu.Unlock()
+
+	return nil
 }
 
 // fireOnChange copies the onChange slice under RLock and calls each handler.

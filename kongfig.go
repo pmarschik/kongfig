@@ -69,15 +69,16 @@ type cfgState struct {
 // Load providers in order from lowest to highest priority.
 // The last writer wins per key.
 type Kongfig struct {
-	data    ConfigData
-	prov    *Provenance
-	logger  *slog.Logger
-	hooks   hookState
-	cfg     cfgState
-	render  renderConfig
-	layers  []Layer
-	parsers []Parser
-	mu      sync.RWMutex
+	data     ConfigData
+	prov     *Provenance
+	logger   *slog.Logger
+	hooks    hookState
+	cfg      cfgState
+	render   renderConfig
+	layers   []Layer
+	parsers  []Parser
+	pipeline []pipelineEntry
+	mu       sync.RWMutex
 }
 
 // ConfigValidator is an optional post-parse validation hook.

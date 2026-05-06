@@ -1037,3 +1037,129 @@ func TestDerive_UnchangedValues_RetainOriginalProvenance(t *testing.T) {
 		t.Errorf("url provenance: got %q, want %q (new value should be 'derived')", got, "derived")
 	}
 }
+
+// fakeWatcherWithLoad is a WatchProvider that supports an initial Load and watch events.
+type fakeWatcherWithLoad struct {
+	initial kongfig.ConfigData
+	ch      chan kongfig.ConfigData
+	name    string
+}
+
+func (w *fakeWatcherWithLoad) Load(_ context.Context) (kongfig.ConfigData, error) {
+	return w.initial, nil
+}
+
+func (w *fakeWatcherWithLoad) ProviderInfo() kongfig.ProviderInfo {
+	return kongfig.ProviderInfo{Name: w.name}
+}
+
+func (w *fakeWatcherWithLoad) Watch(ctx context.Context, cb kongfig.WatchFunc) error {
+	for {
+		select {
+		case data := <-w.ch:
+			cb(kongfig.WatchDataEvent{Data: data})
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func TestWatch_DeriveReplaysOnReload(t *testing.T) {
+	// Load initial provider (value=3), register a derive, then fire a watch reload
+	// (value=5). Verify the derive re-runs against the new provider state.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	wp := &fakeWatcherWithLoad{
+		initial: kongfig.ConfigData{"value": int64(3)},
+		ch:      make(chan kongfig.ConfigData, 1),
+		name:    "watch.source",
+	}
+	k := kongfig.New()
+	mustLoad(t, k, wp)
+
+	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		n, _ := in.Data["value"].(int64) //nolint:errcheck // type assertion; zero value is correct default
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"doubled": n * 2}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := k.All()["doubled"].(int64); got != 6 { //nolint:errcheck // type assertion; ok value intentionally discarded
+		t.Fatalf("initial doubled = %d, want 6", got)
+	}
+
+	changed := make(chan struct{}, 1)
+	k.OnChange(func() { changed <- struct{}{} })
+	k.AddWatcher(wp)
+
+	go func() {
+		//nolint:errcheck // Watch returns ctx.Err on cancel; ignored in test
+		_ = k.Watch(ctx)
+	}()
+
+	wp.ch <- kongfig.ConfigData{"value": int64(5)}
+
+	select {
+	case <-changed:
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for OnChange")
+	}
+
+	if got, _ := k.All()["doubled"].(int64); got != 10 { //nolint:errcheck // type assertion; ok value intentionally discarded
+		t.Errorf("doubled after reload = %d, want 10", got)
+	}
+}
+
+func TestWatch_DeriveSeesOnlyPrecedingLayers(t *testing.T) {
+	// Pipeline: load-A (value=1), derive (reads value → doubled), load-B (extra=99).
+	// On reload of A (value=2), derive should see value=2 (from A) and NOT extra
+	// (which comes after it in the pipeline); doubled should be 4, not contaminated
+	// by values loaded after the derive was registered.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	wpA := &fakeWatcherWithLoad{
+		initial: kongfig.ConfigData{"value": int64(1)},
+		ch:      make(chan kongfig.ConfigData, 1),
+		name:    "source.a",
+	}
+	k := kongfig.New()
+	mustLoad(t, k, wpA)
+
+	var deriveInputData kongfig.ConfigData
+	if err := k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+		deriveInputData = in.Data.Clone()
+		n, _ := in.Data["value"].(int64) //nolint:errcheck // type assertion; zero value is correct default
+		return kongfig.DeriveOutput{Data: kongfig.ConfigData{"doubled": n * 2}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load B AFTER derive — should not be visible to derive on replay.
+	mustLoad(t, k, &staticProvider{data: map[string]any{"extra": int64(99)}, source: "source.b"})
+
+	changed := make(chan struct{}, 1)
+	k.OnChange(func() { changed <- struct{}{} })
+	k.AddWatcher(wpA)
+
+	go func() {
+		//nolint:errcheck // Watch returns ctx.Err on cancel; ignored in test
+		_ = k.Watch(ctx)
+	}()
+
+	wpA.ch <- kongfig.ConfigData{"value": int64(2)}
+
+	select {
+	case <-changed:
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for OnChange")
+	}
+
+	if got, _ := k.All()["doubled"].(int64); got != 4 { //nolint:errcheck // type assertion; ok value intentionally discarded
+		t.Errorf("doubled after reload = %d, want 4", got)
+	}
+	if _, hasExtra := deriveInputData["extra"]; hasExtra {
+		t.Error("derive saw 'extra' (from source.b loaded after derive) — should only see preceding layers")
+	}
+}

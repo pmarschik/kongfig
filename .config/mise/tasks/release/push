@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Push the tagged release to GitHub and update release notes (run after release:tag)"
+#MISE description="Push the tagged release to GitHub — manual recovery step (release:tag runs this automatically)"
 set -euo pipefail
 # shellcheck source=_lib.sh
 source "$(dirname "$0")/_lib.sh"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Update go.sum files after release tags are live on the proxy (run after release:push)"
+#MISE description="Update go.sum files post-publish — manual recovery step (release:tag runs this automatically)"
 set -euo pipefail
 # shellcheck source=_lib.sh
 source "$(dirname "$0")/_lib.sh"

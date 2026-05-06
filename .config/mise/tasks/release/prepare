@@ -89,6 +89,19 @@ for dir in "${MODULE_DIRS[@]}"; do
 done
 success "go.mod files updated"
 
+# ── update checksums (workspace members resolve locally, so this works pre-tag) ─
+info "Updating go.work.sum…"
+go work sync
+success "go.work.sum updated"
+
+info "Tidying go.sum files…"
+for dir in "${MODULE_DIRS[@]}"; do
+  pushd "$dir" > /dev/null
+  go mod tidy
+  popd > /dev/null
+done
+success "go.sum files updated"
+
 echo ""
 echo -e "  Review the changelog and go.mod changes, then run:"
 echo -e "  ${bold}mise run release:tag${reset}"

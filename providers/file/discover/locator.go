@@ -166,7 +166,7 @@ func ExecDirs() DirProvider {
 	return func(_ context.Context) ([]DirEntry, error) {
 		exe, err := os.Executable()
 		if err != nil {
-			return nil, nil //nolint:nilerr // os.Executable failure is not an application error
+			return nil, nil // ignored: os.Executable failure is not an application error
 		}
 		resolved, err := filepath.EvalSymlinks(exe)
 		if err != nil {

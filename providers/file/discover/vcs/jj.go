@@ -32,7 +32,7 @@ func (d *jjRootDiscoverer) root(ctx context.Context) (string, error) {
 	cmd.Dir = start
 	out, err := cmd.Output()
 	if err != nil {
-		return "", nil //nolint:nilerr // any jj error means "not a jj workspace or jj not installed"
+		return "", nil // ignored: any jj error means "not a jj workspace or jj not installed"
 	}
 	return strings.TrimSpace(string(out)), nil
 }

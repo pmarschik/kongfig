@@ -109,24 +109,32 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix, tableHeader string, align bool) error { //nolint:gocognit,cyclop // complex recursive renderer, intentional
+func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix, tableHeader string, align bool) error { //nolint:gocognit,cyclop,funlen // complex recursive renderer, intentional
 	keys := render.OrderedKeys(ctx, prefix, data)
 
-	// Scalars first, then tables (TOML convention: scalars must precede [table] sections)
-	var scalars, tables []string
+	// Scalars first, then tables, then table-arrays (TOML convention: scalars must precede section headers)
+	var scalars, tables, tableArrs []string
 	for _, k := range keys {
-		if _, ok := data[k].(kongfig.ConfigData); ok {
+		v := data[k]
+		if _, ok := v.(kongfig.ConfigData); ok {
 			tables = append(tables, k)
-		} else {
-			// Also treat RenderedValue wrapping a sub-map as a table.
-			if rv, ok := data[k].(kongfig.RenderedValue); ok {
-				if _, isMap := rv.Value.(kongfig.ConfigData); isMap {
-					tables = append(tables, k)
-					continue
-				}
-			}
-			scalars = append(scalars, k)
+			continue
 		}
+		if rv, ok := v.(kongfig.RenderedValue); ok {
+			if _, isMap := rv.Value.(kongfig.ConfigData); isMap {
+				tables = append(tables, k)
+				continue
+			}
+			if isTableArray(rv.Value) {
+				tableArrs = append(tableArrs, k)
+				continue
+			}
+		}
+		if isTableArray(v) {
+			tableArrs = append(tableArrs, k)
+			continue
+		}
+		scalars = append(scalars, k)
 	}
 
 	// Print table header only when this level owns scalars; sub-table-only
@@ -212,7 +220,94 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 			}
 		}
 	}
+
+	for _, k := range tableArrs {
+		v := data[k]
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		rv, isRV := v.(kongfig.RenderedValue)
+		var rawSlice any
+		if isRV {
+			rawSlice = rv.Value
+		} else {
+			rawSlice = v
+		}
+		slice := rawSlice.([]any) //nolint:errcheck // isTableArray already validated
+
+		if tableArrayNeedsBlock(slice, k, cols, forceBlock) { //nolint:nestif // block vs inline decision, intentional
+			for _, elem := range slice {
+				cd := elem.(kongfig.ConfigData) //nolint:errcheck // isTableArray already validated
+				fmt.Fprintf(w, "\n%s\n", s.Syntax("[[")+s.Key(path)+s.Syntax("]]"))
+				if err := renderMap(ctx, w, s, cd, path, "", align); err != nil {
+					return err
+				}
+			}
+		} else {
+			if help := render.HelpText(ctx, path); help != "" {
+				fmt.Fprintf(w, "%s\n", s.Comment("# "+help))
+			}
+			var valueStr string
+			if isRV && rv.Redacted {
+				valueStr = s.Redacted(rv.RedactedDisplay)
+			} else {
+				valueStr = tomlArrayStyled(s, slice)
+			}
+			line := s.Key(k) + " = " + valueStr
+			if isRV {
+				if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+					if align {
+						line += render.AnnMarker + "  " + s.Comment("# ") + ann
+					} else {
+						line += "  " + s.Comment("# ") + ann
+					}
+				}
+			}
+			fmt.Fprintln(w, line)
+		}
+	}
+
 	return nil
+}
+
+// isTableArray reports whether v is a []any whose every element is a ConfigData.
+// These correspond to TOML's array-of-tables ([[key]]) syntax.
+func isTableArray(v any) bool {
+	slice, ok := v.([]any)
+	if !ok || len(slice) == 0 {
+		return false
+	}
+	for _, elem := range slice {
+		if _, ok := elem.(kongfig.ConfigData); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// tableArrayNeedsBlock reports whether a table-array should use [[...]] block
+// form instead of inline [{...}, ...] form. Returns true when forceBlock is set,
+// any element contains a nested ConfigData sub-tree (inline TOML can't express
+// nested tables), or the inline representation would exceed the terminal width.
+func tableArrayNeedsBlock(slice []any, key string, cols int, forceBlock bool) bool {
+	if forceBlock {
+		return true
+	}
+	for _, elem := range slice {
+		for _, v := range elem.(kongfig.ConfigData) { //nolint:errcheck // isTableArray already validated
+			if _, ok := v.(kongfig.ConfigData); ok {
+				return true
+			}
+		}
+	}
+	if cols > 0 {
+		inline := tomlArray(toTOMLSlice(slice))
+		if len(key)+3+len(inline) > cols {
+			return true
+		}
+	}
+	return false
 }
 
 // isTOMLArray reports whether v is a slice type for multiline-overflow detection.
@@ -241,7 +336,7 @@ func toTOMLSlice(v any) []any {
 }
 
 // tomlValue formats a value for TOML output.
-func tomlValue(v any) string {
+func tomlValue(v any) string { //nolint:cyclop // mirrors tomlValueStyled type dispatch, intentional
 	if v == nil {
 		return "nil"
 	}
@@ -265,6 +360,8 @@ func tomlValue(v any) string {
 			out[i] = s
 		}
 		return tomlArray(out)
+	case kongfig.ConfigData:
+		return tomlInlineTable(map[string]any(val))
 	case map[string]any:
 		return tomlInlineTable(val)
 	default:

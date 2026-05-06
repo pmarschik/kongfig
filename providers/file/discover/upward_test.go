@@ -87,7 +87,7 @@ func TestComposeAll_EachLocatorIsIndependent(t *testing.T) {
 	}
 }
 
-// TestComposeAll_SharedNameAmbigiousInFirstOf documents the known design quirk:
+// TestComposeAll_SharedNameAmbiguousInFirstOf documents the known design quirk:
 // because all elements from ComposeAll share the same name, FirstOf cannot
 // distinguish the winner by name alone.
 func TestComposeAll_SharedNameAmbiguousInFirstOf(t *testing.T) {
@@ -105,13 +105,13 @@ func TestComposeAll_SharedNameAmbiguousInFirstOf(t *testing.T) {
 		discover.LocateAppFlat(),    // finds myapp.yaml
 	)
 
-	fo := discover.FirstOf(discoverers[0], discoverers[1])
-	if _, err := fo.Discover(ctx, []string{".yaml"}); err != nil {
+	first := discover.FirstOf(discoverers[0], discoverers[1])
+	if _, err := first.Discover(ctx, []string{".yaml"}); err != nil {
 		t.Fatal(err)
 	}
 	// Both have name "ambiguous", so Name() == "ambiguous" regardless of winner.
-	if fo.Name() != "ambiguous" {
-		t.Errorf("Name() = %q, want %q (shared name)", fo.Name(), "ambiguous")
+	if first.Name() != "ambiguous" {
+		t.Errorf("Name() = %q, want %q (shared name)", first.Name(), "ambiguous")
 	}
 }
 

@@ -15,6 +15,7 @@ github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/kr/pty v1.1.1 h1:VkoXIwSboBpnk99O/KFauAEILuNHv5DVFKZMBN/gUgw=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
+github.com/mna/pigeon v1.3.0 h1:/3fzVrl1C2RK3x04tyL+ribn+3S3VSEFFbCFLmRPAoc=
 github.com/mna/pigeon v1.3.0/go.mod h1:SKQNHonx2q9U2QSSoPtMigExj+vQ1mOpL7UVFQF/IA0=
 github.com/pmarschik/kongfig v0.3.0/go.mod h1:mEzjsBBVUCQVIJoc6TgKCy438kUkGaLCfx4hyQ1pugg=
 github.com/pmarschik/kongfig/kong v0.2.0/go.mod h1:IxV+4AYyfORfnSk+bBKkDfaR1HBUhuJFAB0LHKjb5hU=

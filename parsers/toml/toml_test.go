@@ -291,8 +291,8 @@ func TestBindRender_TypedSlice(t *testing.T) {
 	}
 }
 
-func TestBindRender_AnySliceOfMaps(t *testing.T) {
-	// []any containing ConfigData elements (the post-unmarshal form for TOML array of tables).
+func TestBindRender_AnySliceOfMaps_InlineByDefault(t *testing.T) {
+	// []any of ConfigData renders inline by default (no forceBlock, no terminal width).
 	items := []any{
 		kongfig.ConfigData{"name": "alpha", "value": "one"},
 		kongfig.ConfigData{"name": "beta"},
@@ -308,7 +308,58 @@ func TestBindRender_AnySliceOfMaps(t *testing.T) {
 		t.Errorf("got Go %%v format for []any slice — expected TOML inline syntax:\n%s", out)
 	}
 	if !strings.Contains(out, "items = [") {
-		t.Errorf("expected items rendered as TOML inline array, got:\n%s", out)
+		t.Errorf("expected items rendered as inline array by default, got:\n%s", out)
+	}
+	if strings.Contains(out, "[[items]]") {
+		t.Errorf("expected inline form, got [[...]] block form:\n%s", out)
+	}
+}
+
+func TestBindRender_TableArray_BlockForm(t *testing.T) {
+	// forceBlock triggers [[key]] syntax for []any of ConfigData.
+	items := []any{
+		kongfig.ConfigData{"host": "alpha", "port": int64(8080)},
+		kongfig.ConfigData{"host": "beta", "port": int64(9090)},
+	}
+	data := kongfig.ConfigData{"servers": items}
+	ctx := kongfig.WithRenderBlockCollectionsCtx(context.Background())
+	var buf bytes.Buffer
+	r := tomlparser.Default.Bind(plainStyler{})
+	if err := r.Render(ctx, &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "[[servers]]") {
+		t.Errorf("expected [[servers]] block syntax with forceBlock, got:\n%s", out)
+	}
+	if strings.Contains(out, "servers = [") {
+		t.Errorf("expected [[...]] block form, got inline form:\n%s", out)
+	}
+	if strings.Count(out, "[[servers]]") != 2 {
+		t.Errorf("expected 2 [[servers]] headers (one per element), got:\n%s", out)
+	}
+}
+
+func TestBindRender_TableArray_NestedConfigData_ForcesBlock(t *testing.T) {
+	// Nested ConfigData inside elements forces [[...]] block form even without forceBlock.
+	items := []any{
+		kongfig.ConfigData{
+			"name": "alpha",
+			"tls":  kongfig.ConfigData{"cert": "/etc/cert.pem"},
+		},
+	}
+	data := kongfig.ConfigData{"servers": items}
+	var buf bytes.Buffer
+	r := tomlparser.Default.Bind(plainStyler{})
+	if err := r.Render(context.Background(), &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "[[servers]]") {
+		t.Errorf("expected [[servers]] block form for elements with nested ConfigData, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[servers.tls]") {
+		t.Errorf("expected nested [servers.tls] section, got:\n%s", out)
 	}
 }
 
@@ -337,7 +388,7 @@ type markerStyler struct{ plainStyler }
 func (markerStyler) Key(s string) string { return "<<" + s + ">>" }
 
 func TestBindRender_BlockSliceOfMaps_KeysStyled(t *testing.T) {
-	// Slice-of-maps in multiline mode: keys inside each inline table must go through s.Key().
+	// Slice-of-maps with forceBlock renders as [[aux]] blocks; s.Key() applied to element keys.
 	items := []any{
 		kongfig.ConfigData{"dir": "path/a", "parent": "scope/b"},
 	}
@@ -351,11 +402,14 @@ func TestBindRender_BlockSliceOfMaps_KeysStyled(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
+	if !strings.Contains(out, "[[<<aux>>]]") {
+		t.Errorf("expected [[<<aux>>]] block header (s.Key() applied to path) with forceBlock, got:\n%s", out)
+	}
 	if !strings.Contains(out, "<<dir>>") {
-		t.Errorf("expected s.Key() applied to 'dir' in multiline output, got:\n%s", out)
+		t.Errorf("expected s.Key() applied to 'dir' in block output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "<<parent>>") {
-		t.Errorf("expected s.Key() applied to 'parent' in multiline output, got:\n%s", out)
+		t.Errorf("expected s.Key() applied to 'parent' in block output, got:\n%s", out)
 	}
 }
 

@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/alecthomas/kong v1.15.0
-	github.com/pmarschik/kongfig v0.3.0
+	github.com/pmarschik/kongfig v0.4.0
 	golang.org/x/term v0.42.0
 )
 

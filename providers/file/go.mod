@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/pmarschik/kongfig v0.3.0
+	github.com/pmarschik/kongfig v0.4.0
 )
 
 require (

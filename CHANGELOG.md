@@ -1,3 +1,60 @@
+## [v0.4.0] - 2026-05-06
+
+### 🚀 Features
+
+- _(core)_ Add key ordering support
+- _(core)_ Add Derive method for cross-field computed values
+- _(providers/file)_ Composable file discoverer primitives
+- _(providers/file)_ Add LocateNames FileLocator and FirstOf Discoverer combinator
+- _(core)_ Add MigrationResult return type; MigrationWarnResult built-in; MigrationWarnings accumulation
+- _(providers/file)_ Add LabeledDiscoverer and First for priority-chain discovery
+- _(core)_ Add DeriveInput/DeriveOutput structs; pass Provenance to DeriveFn
+- _(core)_ Add DeriveLoad for computing and loading provider-derived layers
+- _(core)_ Add AddWarning for app-level diagnostic notices
+- _(core)_ Right-align source annotations to terminal right edge
+- _(core)_ Read TTY size from COLUMNS/ROWS env vars as fallback
+- _(parsers/toml)_ Render []ConfigData as [[table-array]] when complex
+- _(core)_ Replay pipeline on watch reload so derives re-run against preceding layers
+
+### 🐛 Bug Fixes
+
+- _(style/charming)_ Make derived annotation less bold
+- _(parsers/yaml)_ Style block slice-of-maps keys; fix annotation indent
+- _(parsers/toml)_ Style keys in multiline array inline tables via tomlValueStyled
+- _(core)_ Store delta not snapshot for derived layer in --layers mode
+- _(core)_ Suppress derived provenance for unchanged keys in merged view
+- _(core)_ Protect merge-func paths from pruneUnchanged stripping
+- _(core)_ Address review findings — docs, tests, nolint, delta test
+- _(core)_ Prune unchanged replace-func results from Derive delta
+- _(core)_ Preserve key order across watch provider reloads
+
+### 💼 Other
+
+- Disable revive unexported-return; remove 20 nolints and rewrite 6 errcheck test assertions
+
+### 🚜 Refactor
+
+- _(providers/file)_ Rewrite LoadConfigPaths in terms of DeriveLoad
+- _(core)_ Use disposable provenance in Derive instead of pruning
+- _(providers/file)_ Unify gitRootDiscoverer/jujutsuRootDiscoverer into vcsRootDiscoverer
+- _(core)_ Make derive a full layer entry; drop redundant k.layers slice
+- _(providers/file)_ Extract compositeDiscoverer into compose.go
+- _(core)_ Replace MigrationResult{Err,Warning} with {Severity,Message}
+- _(providers/file)_ Make LabeledDiscoverer implement innerDiscoverer
+- _(core)_ Eliminate nolint overrides; extract helpers; add render opts structs
+- _(parsers/json)_ Encapsulate s/p/align in jsonRenderOpts struct
+- _(providers/file)_ Replace nolint:nilerr with nilerr-native // ignored comment
+- _(kong/show)_ Replace nolint:gosec with explicit bounds check for fd cast
+
+### 📚 Documentation
+
+- Document pipeline replay, TOML table-array, and context options reference
+
+### 🧪 Testing
+
+- _(core)_ Add test for unchanged Derive values retaining original provenance
+- _(providers/file)_ Add ComposeAll and UpwardFunc tests
+
 ## [v0.3.0] - 2026-04-29
 
 ### 🚀 Features
@@ -50,6 +107,7 @@
 ### 🚀 Features
 
 - Kongfig initial public release
+  [v0.4.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.4.0
   [v0.3.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.3.0
   [v0.2.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.2.0
   [v0.1.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.1.0

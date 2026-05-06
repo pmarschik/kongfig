@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	charm.land/lipgloss/v2 v2.0.3
-	github.com/pmarschik/kongfig v0.4.0
+	github.com/pmarschik/kongfig v0.5.0
 	github.com/pmarschik/lipmark v0.3.0
 )
 

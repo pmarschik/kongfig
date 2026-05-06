@@ -56,6 +56,25 @@ else
 fi
 success "Release notes updated"
 
+# ── post-publish: update go.sum for workspace-member cross-deps ───────────────
+# Now that all module tags are pushed and available on the proxy, go mod tidy
+# can resolve the new version and write correct checksums to each go.sum.
+# GONOSUMDB skips sum-db verification (modules are private/new on the proxy).
+discover_modules
+info "Updating go.sum files (waiting for proxy to serve ${version})…"
+max_wait=120
+for dir in "${MODULE_DIRS[@]}"; do
+  pushd "$dir" > /dev/null
+  elapsed=0
+  until GOWORK=off GONOSUMDB="${ROOT_MODULE}" go mod tidy 2>/dev/null; do
+    elapsed=$((elapsed + 5))
+    [[ $elapsed -ge $max_wait ]] && die "Timed out waiting for ${version} on proxy. Re-run: for each module: GOWORK=off GONOSUMDB=${ROOT_MODULE} go mod tidy"
+    sleep 5
+  done
+  popd > /dev/null
+done
+success "go.sum files updated"
+
 echo ""
 echo -e "  ${green}${bold}✓ Release ${version} is live.${reset}"
 echo ""

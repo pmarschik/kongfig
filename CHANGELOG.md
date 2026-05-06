@@ -1,3 +1,14 @@
+## [v0.5.0] - 2026-05-06
+
+### 🚀 Features
+
+- _(kong/show)_ Suppress redundant per-line source annotations when rendering --layers
+
+### 💼 Other
+
+- _(release)_ Run go work sync + go mod tidy after pinning versions in release:prepare
+- _(release)_ Add GONOSUMDB guard so go work sync/mod tidy work pre-tag
+
 ## [v0.4.0] - 2026-05-06
 
 ### 🚀 Features
@@ -107,6 +118,7 @@
 ### 🚀 Features
 
 - Kongfig initial public release
+  [v0.5.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.5.0
   [v0.4.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.4.0
   [v0.3.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.3.0
   [v0.2.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.2.0

@@ -119,6 +119,10 @@ until GOWORK=off GONOSUMDB="${ROOT_MODULE}" go mod download "${ROOT_MODULE}@${ve
 done
 success "Proxy is serving ${version}"
 
+info "Syncing go.work.sum…"
+GONOSUMDB="${ROOT_MODULE}" go work sync
+success "go.work.sum synced"
+
 info "Tidying go.sum files…"
 for dir in "${MODULE_DIRS[@]}"; do
   pushd "$dir" > /dev/null

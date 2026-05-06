@@ -2,16 +2,37 @@ package discover
 
 import "context"
 
-// LabeledDiscoverer pairs a user label with a discoverer for use with [First].
+// LabeledDiscoverer wraps a discoverer and overrides its Name with a user-supplied
+// label. It implements the full discoverer interface so it can be passed to [FirstOf],
+// [Deprecated], and any other combinator, in addition to [First].
 // Create with [WithLabel].
 type LabeledDiscoverer struct {
 	discoverer innerDiscoverer
 	label      string
 }
 
-// WithLabel creates a [LabeledDiscoverer] pairing label with d.
+// WithLabel wraps d with a user-supplied label that overrides d.Name().
 func WithLabel(label string, d innerDiscoverer) LabeledDiscoverer {
 	return LabeledDiscoverer{label: label, discoverer: d}
+}
+
+// Name returns the user-supplied label.
+func (l LabeledDiscoverer) Name() string { return l.label }
+
+// Discover delegates to the wrapped discoverer.
+func (l LabeledDiscoverer) Discover(ctx context.Context, exts []string) (string, error) {
+	return l.discoverer.Discover(ctx, exts)
+}
+
+// DisplayPath delegates to the wrapped discoverer's DisplayPath if it supports it.
+func (l LabeledDiscoverer) DisplayPath(ctx context.Context, foundPath string) string {
+	type displayPather interface {
+		DisplayPath(context.Context, string) string
+	}
+	if dp, ok := l.discoverer.(displayPather); ok {
+		return dp.DisplayPath(ctx, foundPath)
+	}
+	return ""
 }
 
 // DiscoveryHit is returned by [First].
@@ -36,7 +57,7 @@ type DiscoveryHit struct {
 //	}
 func First(ctx context.Context, exts []string, ds ...LabeledDiscoverer) (DiscoveryHit, error) {
 	for _, d := range ds {
-		path, err := d.discoverer.Discover(ctx, exts)
+		path, err := d.Discover(ctx, exts)
 		if err != nil {
 			return DiscoveryHit{}, err
 		}

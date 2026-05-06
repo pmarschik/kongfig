@@ -4,10 +4,17 @@
 
 - _(kong/show)_ Suppress redundant per-line source annotations when rendering --layers
 
+### 🐛 Bug Fixes
+
+- _(release)_ Move go work sync to post-proxy step
+
 ### 💼 Other
 
 - _(release)_ Run go work sync + go mod tidy after pinning versions in release:prepare
 - _(release)_ Add GONOSUMDB guard so go work sync/mod tidy work pre-tag
+- _(release)_ Move post-publish go mod tidy to release:push; fix go work sync GONOSUMDB
+- _(release)_ Add release:post-tidy; release:push points to it for go.sum tidy
+- _(release)_ Collapse tag+push+post-tidy into release:tag; keep others as recovery
 
 ## [v0.4.0] - 2026-05-06
 

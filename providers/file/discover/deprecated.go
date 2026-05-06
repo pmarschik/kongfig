@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	kongfig "github.com/pmarschik/kongfig"
@@ -69,10 +70,10 @@ func (d *deprecatedDiscoverer) Discover(ctx context.Context, exts []string) (str
 		h = d.policy.OnFirst
 	}
 	if h != nil {
-		// MigrationResult.Warning is silently dropped here: discoverers run before
-		// a Kongfig instance is available, so there is no target to accumulate into.
-		if r := h(event); r.Err != nil {
-			return "", r.Err
+		// MigrationResult.MigrationWarning is silently dropped here: discoverers run
+		// before a Kongfig instance is available, so there is no target to accumulate into.
+		if r := h(event); r.Severity == kongfig.MigrationError {
+			return "", errors.New(r.Message)
 		}
 	}
 

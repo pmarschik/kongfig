@@ -2,7 +2,6 @@ package kongfig_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -265,7 +264,7 @@ func TestMigrationWarnings_NotAccumulated_OnFailedLoad(t *testing.T) {
 	// OnFirst fails the load; warning should NOT be accumulated since Err takes precedence.
 	k.AddRename("old", "new", kongfig.MigrationPolicy{
 		OnFirst: func(kongfig.MigrationEvent) kongfig.MigrationResult {
-			return kongfig.MigrationResult{Err: errors.New("forced fail")}
+			return kongfig.MigrationResult{Severity: kongfig.MigrationError, Message: "forced fail"}
 		},
 	})
 

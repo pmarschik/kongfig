@@ -58,17 +58,27 @@ func (LegacyFileEvent) migrationEvent() {}
 
 // ── Handler and built-ins ──────────────────────────────────────────────────────
 
-// MigrationResult is returned by MigrationFunc.
-// A non-nil Err causes Load to fail; a non-empty Warning is non-fatal and
-// accumulated in the Kongfig instance — retrieve with [Kongfig.MigrationWarnings].
-// If both are set the error takes precedence and the Warning is discarded.
+// MigrationSeverity indicates the impact of a [MigrationResult].
+type MigrationSeverity uint8
+
+const (
+	// MigrationOK means no recorded impact; the handler may have logged as a side-effect.
+	MigrationOK MigrationSeverity = iota
+	// MigrationWarning is non-fatal; Message is accumulated in [Kongfig.MigrationWarnings].
+	MigrationWarning
+	// MigrationError is fatal; Load returns an error and the layer is not committed.
+	MigrationError
+)
+
+// MigrationResult is returned by [MigrationFunc].
+// Severity determines whether Load fails (MigrationError), accumulates a warning
+// (MigrationWarning), or takes no action (MigrationOK).
 type MigrationResult struct {
-	Err     error
-	Warning string
+	Message  string
+	Severity MigrationSeverity
 }
 
 // MigrationFunc is called when a migration condition fires during Load.
-// Return a non-nil Err to cause Load to fail; set Warning for a non-fatal diagnostic.
 type MigrationFunc func(MigrationEvent) MigrationResult
 
 // Built-in MigrationFunc values for common behaviors.
@@ -94,10 +104,10 @@ var (
 		return MigrationResult{}
 	}
 
-	// MigrationFail returns an error, causing Load to fail.
+	// MigrationFail returns a fatal error, causing Load to fail.
 	// Use to enforce migration at startup.
 	MigrationFail MigrationFunc = func(e MigrationEvent) MigrationResult {
-		return MigrationResult{Err: migrationError(e)}
+		return MigrationResult{Severity: MigrationError, Message: migrationMessage(e)}
 	}
 
 	// MigrationWarnResult returns a non-fatal warning that is accumulated in the
@@ -107,7 +117,7 @@ var (
 	// Note: when used with [discover.Deprecated], warnings are silently dropped
 	// because discoverers run before the Kongfig instance is available.
 	MigrationWarnResult MigrationFunc = func(e MigrationEvent) MigrationResult {
-		return MigrationResult{Warning: migrationMessage(e)}
+		return MigrationResult{Severity: MigrationWarning, Message: migrationMessage(e)}
 	}
 )
 
@@ -136,10 +146,6 @@ func migrationMessage(e MigrationEvent) string {
 		return fmt.Sprintf("deprecated config file %q found; migrate to: %s", ev.FilePath, ev.PreferredPath)
 	}
 	return fmt.Sprintf("migration: unexpected event type %T", e)
-}
-
-func migrationError(e MigrationEvent) error {
-	return errors.New(migrationMessage(e))
 }
 
 // ── Policy ─────────────────────────────────────────────────────────────────────
@@ -284,10 +290,13 @@ func (k *Kongfig) applyRenames(data ConfigData, sourceName, sourceFile string) (
 		}
 
 		res := r.dispatch(event)
-		if res.Err != nil {
-			errs = append(errs, res.Err)
-		} else if res.Warning != "" {
-			warnings = append(warnings, res.Warning)
+		switch res.Severity {
+		case MigrationError:
+			errs = append(errs, errors.New(res.Message))
+		case MigrationWarning:
+			warnings = append(warnings, res.Message)
+		case MigrationOK:
+			// no action
 		}
 	}
 

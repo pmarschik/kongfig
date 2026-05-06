@@ -54,19 +54,19 @@ Render options are passed as `RenderOption` values to `k.Render`, `k.RenderWith`
 that is injected into a `context.Context` and passed through to `Renderer.Render(ctx, w, data)`.
 Renderers read options via accessors in the `render` sub-package.
 
-| Option                                                  | Effect                                                                                                                                                                                                                   |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `WithRenderNoComments()`                                | Suppress all comment output (help texts + source annotations).                                                                                                                                                           |
-| `WithRenderShowRedacted()`                              | Reveal values that would otherwise be redacted.                                                                                                                                                                          |
-| `WithRenderFilterSource(filters []string)`              | Source filter list. Empty = show all. `"env"` = only env. `"no-defaults"` = exclude defaults. See [Provenance & Filtering](provenance.md).                                                                               |
-| `WithRenderHelpTexts(texts map[string]string)`          | Per-path human descriptions emitted as comments above keys. Supports prefix matching (parent path covers map/slice leaves). Each text is emitted at most once per render call. Populate via `schema.HelpTextPaths[T]()`. |
-| `WithRenderVerboseSources(sources map[string][]string)` | Enables `[env.tag, env.kong]` multi-source annotation expansion.                                                                                                                                                         |
-| `WithRenderFileRawPaths()`                              | File source annotations show the raw canonical path instead of the display path.                                                                                                                                         |
-| `WithRenderGroupEnvLayers()`                            | In `RenderLayers`, merge all `env.*` layers into one before iteration.                                                                                                                                                   |
-| `WithRenderFormat(format string)`                       | Output format: `"yaml"`, `"toml"`, `"json"`, `"env"`, `"flags"`.                                                                                                                                                         |
-| `WithRenderNoAlignSources()`                            | Disable column-alignment of source annotation comments.                                                                                                                                                                  |
+| Option                                                  | Effect                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WithRenderNoComments()`                                | Suppress all comment output (help texts + source annotations).                                                                                                                                                                                                                                        |
+| `WithRenderShowRedacted()`                              | Reveal values that would otherwise be redacted.                                                                                                                                                                                                                                                       |
+| `WithRenderFilterSource(filters []string)`              | Source filter list. Empty = show all. `"env"` = only env. `"no-defaults"` = exclude defaults. See [Provenance & Filtering](provenance.md).                                                                                                                                                            |
+| `WithRenderHelpTexts(texts map[string]string)`          | Per-path human descriptions emitted as comments above keys. Supports prefix matching (parent path covers map/slice leaves). Each text is emitted at most once per render call. Populate via `schema.HelpTextPaths[T]()`.                                                                              |
+| `WithRenderVerboseSources(sources map[string][]string)` | Enables `[env.tag, env.kong]` multi-source annotation expansion.                                                                                                                                                                                                                                      |
+| `WithRenderFileRawPaths()`                              | File source annotations show the raw canonical path instead of the display path.                                                                                                                                                                                                                      |
+| `WithRenderGroupEnvLayers()`                            | In `RenderLayers`, merge all `env.*` layers into one before iteration.                                                                                                                                                                                                                                |
+| `WithRenderFormat(format string)`                       | Output format: `"yaml"`, `"toml"`, `"json"`, `"env"`, `"flags"`.                                                                                                                                                                                                                                      |
+| `WithRenderNoAlignSources()`                            | Disable column-alignment of source annotation comments.                                                                                                                                                                                                                                               |
 | `WithRenderBlockCollections()`                          | Always render arrays and maps in block/multiline style. Default: inline when short, block when overflowing the terminal width. In TOML, forces `[]ConfigData` slices to use `[[table-array]]` headers; nested `ConfigData` inside elements always forces `[[table-array]]` regardless of this option. |
-| `render.WithTTYSize(cols, rows int)`                    | Set terminal dimensions. `AlignAnnotationsCtx` uses this to fall back to above-line annotations when the terminal is too narrow for inline layout.                                                                       |
+| `render.WithTTYSize(cols, rows int)`                    | Set terminal dimensions. `AlignAnnotationsCtx` uses this to fall back to above-line annotations when the terminal is too narrow for inline layout.                                                                                                                                                    |
 
 ### Context accessors (in `render` package)
 
@@ -87,15 +87,15 @@ option directly into a `context.Context`. These are used when you cannot pass
 `RenderOption` slices — for example when writing a custom renderer or calling
 the render path from middleware:
 
-| `*Ctx` function                                        | Equivalent `RenderOption`          |
-| ------------------------------------------------------ | ---------------------------------- |
-| `WithRenderNoCommentsCtx(ctx)`                         | `WithRenderNoComments()`           |
-| `WithRenderNoAlignSourcesCtx(ctx)`                     | `WithRenderNoAlignSources()`       |
-| `WithRenderFileRawPathsCtx(ctx)`                       | `WithRenderFileRawPaths()`         |
-| `WithRenderBlockCollectionsCtx(ctx)`                   | `WithRenderBlockCollections()`     |
-| `WithRenderHelpTextsCtx(ctx, texts map[string]string)` | `WithRenderHelpTexts(texts)`       |
-| `WithRenderFieldNamesCtx(ctx, names PathFieldNames)`   | _(no RenderOption equivalent)_     |
-| `render.WithTTYSizeCtx(ctx, cols, rows int)`           | `render.WithTTYSize(cols, rows)`   |
+| `*Ctx` function                                        | Equivalent `RenderOption`        |
+| ------------------------------------------------------ | -------------------------------- |
+| `WithRenderNoCommentsCtx(ctx)`                         | `WithRenderNoComments()`         |
+| `WithRenderNoAlignSourcesCtx(ctx)`                     | `WithRenderNoAlignSources()`     |
+| `WithRenderFileRawPathsCtx(ctx)`                       | `WithRenderFileRawPaths()`       |
+| `WithRenderBlockCollectionsCtx(ctx)`                   | `WithRenderBlockCollections()`   |
+| `WithRenderHelpTextsCtx(ctx, texts map[string]string)` | `WithRenderHelpTexts(texts)`     |
+| `WithRenderFieldNamesCtx(ctx, names PathFieldNames)`   | _(no RenderOption equivalent)_   |
+| `render.WithTTYSizeCtx(ctx, cols, rows int)`           | `render.WithTTYSize(cols, rows)` |
 
 ### How show.Flags.Render assembles options
 
@@ -114,11 +114,11 @@ file-discovery calls. Providers and discoverers read them to adapt their behavio
 
 ### Core options (`package kongfig`)
 
-| Function                               | Reader                    | Effect                                                                                                         |
-| -------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `WithAppName(ctx, name string)`        | `AppName(ctx)`            | Application name used by file discoverers (e.g. `LocateAppFlat` probes `<dir>/<name>.<ext>`).                 |
-| `WithConfigBase(ctx, base string)`     | `ConfigBase(ctx)`         | Base filename for `LocateConfigBase` (default: `"config"`).                                                    |
-| `WithHiddenFiles(ctx)`                 | `HiddenFiles(ctx)`        | Also probe hidden variants (`.<appname>.<ext>`, `.<appname>/config.<ext>`) when set.                           |
+| Function                           | Reader             | Effect                                                                                        |
+| ---------------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
+| `WithAppName(ctx, name string)`    | `AppName(ctx)`     | Application name used by file discoverers (e.g. `LocateAppFlat` probes `<dir>/<name>.<ext>`). |
+| `WithConfigBase(ctx, base string)` | `ConfigBase(ctx)`  | Base filename for `LocateConfigBase` (default: `"config"`).                                   |
+| `WithHiddenFiles(ctx)`             | `HiddenFiles(ctx)` | Also probe hidden variants (`.<appname>.<ext>`, `.<appname>/config.<ext>`) when set.          |
 
 ```go
 ctx := kongfig.WithAppName(context.Background(), "myapp")
@@ -130,6 +130,6 @@ k.MustLoad(ctx, fileprovider.New(...))
 
 ### Discovery options (`package discover`)
 
-| Function                       | Reader                       | Effect                                                                 |
-| ------------------------------ | ---------------------------- | ---------------------------------------------------------------------- |
-| `WithLongDisplayPaths(ctx)`    | `DisplayPathIsLong(ctx)`     | Display absolute/relative paths in `--layers` output instead of short tokens like `$xdg` or `$git-root`. |
+| Function                    | Reader                   | Effect                                                                                                   |
+| --------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `WithLongDisplayPaths(ctx)` | `DisplayPathIsLong(ctx)` | Display absolute/relative paths in `--layers` output instead of short tokens like `$xdg` or `$git-root`. |

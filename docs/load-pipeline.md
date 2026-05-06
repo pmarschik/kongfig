@@ -67,7 +67,7 @@ appending a new layer:
 2. All pipeline entries are replayed in registration order:
    - **Provider entries** are merged from their stored (post-transform) snapshot.
    - **Derive entries** re-run their function against the accumulated state at
-     that position — they see only the layers registered *before* them.
+     that position — they see only the layers registered _before_ them.
 3. OnLoad hooks fire against the proposed state; a hook error rejects the reload
    and leaves the prior state unchanged.
 4. If all hooks pass, `k.data`, provenance, and the pipeline snapshot are

@@ -60,9 +60,22 @@ After each `Load`, a **deep clone of the provider's post-transform data** is sto
 
 ## Watch reload path
 
-`AddWatcher` snapshots source label, parser, and meta at registration time.
-`reloadEntry` forwards them to `LoadParsed` on reload so `--layers` display and
-annotations remain consistent after hot-reload.
+On watch reload, `reloadEntry` replays the **full ordered pipeline** rather than
+appending a new layer:
+
+1. The reloaded provider's snapshot is updated with the new data.
+2. All pipeline entries are replayed in registration order:
+   - **Provider entries** are merged from their stored (post-transform) snapshot.
+   - **Derive entries** re-run their function against the accumulated state at
+     that position — they see only the layers registered *before* them.
+3. OnLoad hooks fire against the proposed state; a hook error rejects the reload
+   and leaves the prior state unchanged.
+4. If all hooks pass, `k.data`, provenance, and the pipeline snapshot are
+   committed atomically.
+
+This ensures derived values are always consistent with the current provider data.
+See [Watch — Derives and pipeline replay](watch.md#derives-and-pipeline-replay)
+for an example.
 
 ## Source label conventions
 

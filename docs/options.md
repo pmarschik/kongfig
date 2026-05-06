@@ -65,7 +65,7 @@ Renderers read options via accessors in the `render` sub-package.
 | `WithRenderGroupEnvLayers()`                            | In `RenderLayers`, merge all `env.*` layers into one before iteration.                                                                                                                                                   |
 | `WithRenderFormat(format string)`                       | Output format: `"yaml"`, `"toml"`, `"json"`, `"env"`, `"flags"`.                                                                                                                                                         |
 | `WithRenderNoAlignSources()`                            | Disable column-alignment of source annotation comments.                                                                                                                                                                  |
-| `WithRenderBlockCollections()`                          | Always render arrays and maps in block/multiline style. Default: inline when short, block when overflowing the terminal width.                                                                                           |
+| `WithRenderBlockCollections()`                          | Always render arrays and maps in block/multiline style. Default: inline when short, block when overflowing the terminal width. In TOML, forces `[]ConfigData` slices to use `[[table-array]]` headers; nested `ConfigData` inside elements always forces `[[table-array]]` regardless of this option. |
 | `render.WithTTYSize(cols, rows int)`                    | Set terminal dimensions. `AlignAnnotationsCtx` uses this to fall back to above-line annotations when the terminal is too narrow for inline layout.                                                                       |
 
 ### Context accessors (in `render` package)
@@ -73,12 +73,29 @@ Renderers read options via accessors in the `render` sub-package.
 Renderers read options via the `render` sub-package, not from a struct:
 
 ```go
-render.NoComments(ctx)        // bool
-render.HelpTexts(ctx)         // map[string]string
-render.AlignSources(ctx)      // bool (true = align, default)
+render.NoComments(ctx)          // bool
+render.HelpTexts(ctx)           // map[string]string
+render.AlignSources(ctx)        // bool (true = align, default)
 render.FilterSourceFromCtx(ctx) // []string
-render.FieldName(ctx, path)   // string (field name for current source)
+render.FieldName(ctx, path)     // string (field name for current source)
 ```
+
+### `*Ctx` injection variants
+
+Every render option has a corresponding `With*Ctx` function that injects the
+option directly into a `context.Context`. These are used when you cannot pass
+`RenderOption` slices — for example when writing a custom renderer or calling
+the render path from middleware:
+
+| `*Ctx` function                                        | Equivalent `RenderOption`          |
+| ------------------------------------------------------ | ---------------------------------- |
+| `WithRenderNoCommentsCtx(ctx)`                         | `WithRenderNoComments()`           |
+| `WithRenderNoAlignSourcesCtx(ctx)`                     | `WithRenderNoAlignSources()`       |
+| `WithRenderFileRawPathsCtx(ctx)`                       | `WithRenderFileRawPaths()`         |
+| `WithRenderBlockCollectionsCtx(ctx)`                   | `WithRenderBlockCollections()`     |
+| `WithRenderHelpTextsCtx(ctx, texts map[string]string)` | `WithRenderHelpTexts(texts)`       |
+| `WithRenderFieldNamesCtx(ctx, names PathFieldNames)`   | _(no RenderOption equivalent)_     |
+| `render.WithTTYSizeCtx(ctx, cols, rows int)`           | `render.WithTTYSize(cols, rows)`   |
 
 ### How show.Flags.Render assembles options
 
@@ -87,3 +104,32 @@ render.FieldName(ctx, path)   // string (field name for current source)
 1. `f.Options(k)` — from CLI flags (`--format`, `--redacted`, `--sources`, `--verbose`, etc.)
 2. Caller-provided `opts` — overrides from the application
 3. Instance-level settings from `k` (redacted paths, hide flags) — applied by `prepareRender`
+
+---
+
+## 5. Context options — discovery and loading
+
+These are injected into the `context.Context` passed to `Load`, `Watch`, and
+file-discovery calls. Providers and discoverers read them to adapt their behaviour.
+
+### Core options (`package kongfig`)
+
+| Function                               | Reader                    | Effect                                                                                                         |
+| -------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `WithAppName(ctx, name string)`        | `AppName(ctx)`            | Application name used by file discoverers (e.g. `LocateAppFlat` probes `<dir>/<name>.<ext>`).                 |
+| `WithConfigBase(ctx, base string)`     | `ConfigBase(ctx)`         | Base filename for `LocateConfigBase` (default: `"config"`).                                                    |
+| `WithHiddenFiles(ctx)`                 | `HiddenFiles(ctx)`        | Also probe hidden variants (`.<appname>.<ext>`, `.<appname>/config.<ext>`) when set.                           |
+
+```go
+ctx := kongfig.WithAppName(context.Background(), "myapp")
+ctx  = kongfig.WithConfigBase(ctx, "settings")
+ctx  = kongfig.WithHiddenFiles(ctx)
+
+k.MustLoad(ctx, fileprovider.New(...))
+```
+
+### Discovery options (`package discover`)
+
+| Function                       | Reader                       | Effect                                                                 |
+| ------------------------------ | ---------------------------- | ---------------------------------------------------------------------- |
+| `WithLongDisplayPaths(ctx)`    | `DisplayPathIsLong(ctx)`     | Display absolute/relative paths in `--layers` output instead of short tokens like `$xdg` or `$git-root`. |

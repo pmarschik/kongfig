@@ -131,3 +131,43 @@ kf.AddWatcher(fp)
 
 No extra setup is required. The watcher starts when `kf.Watch(ctx)` is called
 and stops when the context is canceled.
+
+---
+
+## Derives and pipeline replay
+
+`Kongfig.Derive` registers a compute step that runs after one or more providers
+are loaded. On watch reload, the full **pipeline** is replayed from scratch so
+derived values are always recomputed from the latest provider data.
+
+Given this setup:
+
+```go
+k.MustLoad(ctx, providerA)  // step 1
+k.MustLoad(ctx, providerB)  // step 2
+k.Derive(func(in kongfig.DeriveInput) (kongfig.DeriveOutput, error) {
+    // step 3: sees A merged with B
+    return kongfig.DeriveOutput{Data: kongfig.ConfigData{
+        "doubled": in.Data["value"].(int64) * 2,
+    }}, nil
+})
+k.MustLoad(ctx, providerC)  // step 4
+
+k.AddWatcher(providerA)
+go k.Watch(ctx)
+```
+
+When `providerA` reloads, the pipeline replays in registration order:
+
+1. Merge providerA's **new** data (step 1)
+2. Merge providerB's stored snapshot (step 2)
+3. **Re-run the derive** function against the merged A+B state (step 3)
+4. Merge providerC's stored snapshot (step 4)
+
+The derive at step 3 sees only the layers that precede it — providerC's data
+is not visible to the derive even though it appears later in the pipeline. This
+mirrors the semantics at initial load: each step sees the accumulated state of
+everything registered before it.
+
+OnLoad hooks fire against the fully replayed proposed state; if any hook returns
+an error the reload is rejected and the prior state is preserved.

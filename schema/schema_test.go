@@ -3,6 +3,7 @@ package schema_test
 import (
 	"net"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/pmarschik/kongfig/casing"
@@ -587,5 +588,80 @@ func TestInlineTablePaths_StructFieldMarksItself(t *testing.T) {
 	}
 	if got[0].MaxKeys != 0 {
 		t.Errorf("MaxKeys = %d, want 0 (renderer default)", got[0].MaxKeys)
+	}
+}
+
+// paths flattens the entries for comparison by pattern alone.
+func paths(entries []schema.InlineTableEntry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.Path
+	}
+	return out
+}
+
+// A mark written inside a map's value type has to be reachable: the walker
+// descends through the map, and the entry segment appears as "*".
+func TestInlineTablePaths_DescendsIntoMapValues(t *testing.T) {
+	type frontmatter struct {
+		Related []string `kongfig:"related,inline"`
+	}
+	type template struct {
+		Frontmatter frontmatter `kongfig:"frontmatter,inline"`
+	}
+	type profile struct {
+		Push     struct{} `kongfig:"push,inline"`
+		Template template `kongfig:"template"`
+	}
+	type cfg struct {
+		Profiles map[string]profile `kongfig:"profiles"`
+	}
+
+	got := paths(schema.InlineTablePaths[cfg]())
+
+	for _, want := range []string{
+		"profiles.*.push",
+		"profiles.*.template.frontmatter",
+		"profiles.*.template.frontmatter.related",
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q; got %v", want, got)
+		}
+	}
+}
+
+// A slice element's own marks live under the slice path, with no extra segment:
+// the emitter addresses array elements by the bare path.
+func TestInlineTablePaths_DescendsIntoSliceElements(t *testing.T) {
+	type rewrite struct {
+		Opts map[string]string `kongfig:"opts,inline"`
+	}
+	type cfg struct {
+		Rewrites []rewrite `kongfig:"rewrites,inline"`
+	}
+
+	got := paths(schema.InlineTablePaths[cfg]())
+
+	for _, want := range []string{"rewrites", "rewrites.opts.*"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q; got %v", want, got)
+		}
+	}
+}
+
+// Recursive types must not send the walker into an endless descent.
+func TestInlineTablePaths_RecursiveTypeTerminates(t *testing.T) {
+	type node struct {
+		Children map[string]*node `kongfig:"children"`
+		Name     string           `kongfig:"name,inline"`
+	}
+	type cfg struct {
+		Root node `kongfig:"root"`
+	}
+
+	got := paths(schema.InlineTablePaths[cfg]())
+
+	if !slices.Contains(got, "root.name") {
+		t.Errorf("missing root.name; got %v", got)
 	}
 }

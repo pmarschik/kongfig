@@ -50,6 +50,10 @@ type FieldTag struct {
 	Skip         bool
 	Squash       bool
 	IsConfigPath bool
+	// Overflow keeps the compact one-line form even when it does not fit the
+	// terminal, for a value whose shape is worth more than a line that ends
+	// inside the window. It implies Inline.
+	Overflow bool
 }
 
 // ParseFieldTag parses a kongfig struct tag value.
@@ -102,6 +106,8 @@ func ParseFieldTag(tag, fieldName string) FieldTag {
 		case "inline":
 			n := 0
 			ft.Inline = &n
+		case "overflow":
+			ft.Overflow = true
 		default:
 			if !applyPrefixedTagOpt(opt, &ft) {
 				ft.Extras = append(ft.Extras, opt)
@@ -508,30 +514,47 @@ type InlineTableEntry struct {
 // InlineTablePaths collects the paths marked with the inline struct tag option.
 //
 // On a struct field the mark applies to that table itself. On a map field it
-// applies to the map's entries, so the returned path ends in a "*" segment:
+// applies to the map's entries, so the returned path ends in a "*" segment. On a
+// slice field it applies to the elements, which the emitters address by the
+// slice's own path:
 //
 //	type Config struct {
-//	    TLS     TLSConfig         `kongfig:"tls,inline"`       // -> "tls"
-//	    Buckets map[string]Bucket `kongfig:"buckets,inline=2"` // -> "buckets.*"
+//	    TLS      TLSConfig         `kongfig:"tls,inline"`       // -> "tls"
+//	    Buckets  map[string]Bucket `kongfig:"buckets,inline=2"` // -> "buckets.*"
+//	    Rewrites []Rewrite         `kongfig:"rewrites,inline"`  // -> "rewrites"
+//	}
+//
+// The walk descends through map values and slice elements as well as struct
+// fields, so a mark written inside an element type is reachable:
+//
+//	type Profile struct {
+//	    Push PushConfig `kongfig:"push,inline"`
+//	}
+//	type Config struct {
+//	    Profiles map[string]Profile `kongfig:"profiles"` // -> "profiles.*.push"
 //	}
 //
 // Renderers that cannot express inline tables ignore these entries.
 func InlineTablePaths[T any]() []InlineTableEntry {
 	var out []InlineTableEntry
-	walkInlineFields(reflect.TypeFor[T](), "", &out)
+	walkInlineFields(reflect.TypeFor[T](), "", &out, map[reflect.Type]bool{})
 	return out
 }
 
-func walkInlineFields(typ reflect.Type, prefix string, out *[]InlineTableEntry) {
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-	if typ.Kind() != reflect.Struct {
+// walkInlineFields collects the marks on typ's fields and descends into the
+// types they hold. active holds the types on the current path, so a recursive
+// type is entered once rather than forever.
+func walkInlineFields(typ reflect.Type, prefix string, out *[]InlineTableEntry, active map[reflect.Type]bool) {
+	typ = derefType(typ)
+	if typ.Kind() != reflect.Struct || active[typ] {
 		return
 	}
+	active[typ] = true
+	defer delete(active, typ)
+
 	for field := range typ.Fields() {
 		if field.Anonymous {
-			walkInlineFields(field.Type, prefix, out)
+			walkInlineFields(field.Type, prefix, out, active)
 			continue
 		}
 		if !field.IsExported() {
@@ -545,22 +568,35 @@ func walkInlineFields(typ reflect.Type, prefix string, out *[]InlineTableEntry) 
 		if prefix != "" {
 			path = prefix + "." + ft.Name
 		}
-		subTyp := field.Type
-		for subTyp.Kind() == reflect.Pointer {
-			subTyp = subTyp.Elem()
-		}
+		marked, elemTyp, elemPrefix := inlineTargets(derefType(field.Type), path)
 		if ft.Inline != nil {
-			marked := path
-			if subTyp.Kind() == reflect.Map {
-				// The mark applies to the entries, not to the map node itself.
-				marked = path + ".*"
-			}
 			*out = append(*out, InlineTableEntry{Path: marked, MaxKeys: *ft.Inline})
 		}
-		if subTyp.Kind() == reflect.Struct {
-			walkInlineFields(field.Type, path, out)
-		}
+		walkInlineFields(elemTyp, elemPrefix, out, active)
 	}
+}
+
+// inlineTargets works out, for a field of type typ living at path, which path an
+// inline mark on it names and where the marks inside its element type hang off.
+// A map's entries take a "*" segment; a slice's elements share the slice's path,
+// which is how the emitters address them; anything else is the value itself.
+func inlineTargets(typ reflect.Type, path string) (marked string, elemTyp reflect.Type, elemPrefix string) {
+	switch typ.Kind() {
+	case reflect.Map:
+		return path + ".*", derefType(typ.Elem()), path + ".*"
+	case reflect.Slice, reflect.Array:
+		return path, derefType(typ.Elem()), path
+	default:
+		return path, typ, path
+	}
+}
+
+// derefType strips pointer indirection from a type.
+func derefType(typ reflect.Type) reflect.Type {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	return typ
 }
 
 // isPrimitiveKind reports whether k is one of the scalar kinds that do not need

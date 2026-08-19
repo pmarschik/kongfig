@@ -296,9 +296,11 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 
 	// Scalars first, then tables, then table-arrays (TOML convention: scalars must precede section headers)
 	scalars, tables, tableArrs := classifyTOMLKeys(data, keys)
-	// Inlined tables are key/value lines, so they must join the scalars ahead of
-	// any header — anything after a header would belong to that section instead.
+	// Inlined tables and short arrays of tables are key/value lines, so they must
+	// join the scalars ahead of any header — anything after a header would belong
+	// to that section instead.
 	inlines, tables := splitInlineTables(ctx, s, data, tables, prefix, depth, opts)
+	inlineArrs, tableArrs := splitTableArrays(data, tableArrs, depth, opts)
 
 	// Every table level owns a header. Top-level tables are preceded by a blank
 	// line; nested ones sit directly under their parent.
@@ -318,6 +320,10 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 	for _, in := range inlines {
 		renderTOMLInline(ctx, w, s, in, depth, opts)
 	}
+	for _, k := range inlineArrs {
+		path := buildTOMLPath(prefix, k)
+		renderTOMLTableArrayInline(ctx, w, s, k, data[k], path, depth, opts)
+	}
 	for _, k := range tables {
 		path := buildTOMLPath(prefix, k)
 		if err := renderTOMLTable(ctx, w, s, data[k], path, depth+1, opts); err != nil {
@@ -326,7 +332,7 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 	}
 	for _, k := range tableArrs {
 		path := buildTOMLPath(prefix, k)
-		if err := renderTOMLTableArray(ctx, w, s, k, data[k], path, depth, opts); err != nil {
+		if err := renderTOMLTableArrayBlock(ctx, w, s, data[k], path, depth, opts); err != nil {
 			return err
 		}
 	}
@@ -457,6 +463,9 @@ func inlineCandidate(ctx context.Context, s kongfig.Styler, k string, v any, pat
 	if rv, isRV := v.(kongfig.RenderedValue); isRV && rv.Redacted {
 		e.rendered = s.Redacted(rv.RedactedDisplay)
 	} else {
+		if opts.omitNil {
+			sub = stripNils(sub)
+		}
 		e.rendered = tomlInlineTableCtx(ctx, s, path, sub)
 	}
 
@@ -517,48 +526,122 @@ func renderTOMLTable(ctx context.Context, w io.Writer, s kongfig.Styler, v any, 
 	return nil
 }
 
-func renderTOMLTableArray(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path string, depth int, opts tomlRenderOpts) error {
-	rv, isRV := v.(kongfig.RenderedValue)
-	var rawSlice any
+// tableArraySlice unwraps a table-array value to its slice and its
+// [kongfig.RenderedValue] wrapper, if any.
+func tableArraySlice(v any) (slice []any, rv kongfig.RenderedValue, isRV, ok bool) {
+	rv, isRV = v.(kongfig.RenderedValue)
+	raw := v
 	if isRV {
-		rawSlice = rv.Value
-	} else {
-		rawSlice = v
+		raw = rv.Value
 	}
-	slice, ok := rawSlice.([]any)
+	slice, ok = raw.([]any)
+	return slice, rv, isRV, ok
+}
+
+// splitTableArrays partitions arrays of tables into the ones written as a
+// key/value line and the ones written as [[section]] blocks. The distinction
+// decides emission order, not just formatting: a key/value line placed after a
+// section header would re-parse as a member of that section.
+func splitTableArrays(data kongfig.ConfigData, tableArrs []string, depth int, opts tomlRenderOpts) (inlineArrs, blocks []string) {
+	for _, k := range tableArrs {
+		slice, rv, isRV, ok := tableArraySlice(data[k])
+		switch {
+		case !ok:
+			continue // not a slice after all; nothing to emit
+		case isRV && rv.Redacted:
+			// The placeholder is a single value, so it is always a key/value line.
+			inlineArrs = append(inlineArrs, k)
+		case tableArrayNeedsBlock(slice, depth, opts):
+			blocks = append(blocks, k)
+		default:
+			inlineArrs = append(inlineArrs, k)
+		}
+	}
+	return inlineArrs, blocks
+}
+
+// renderTOMLTableArrayInline writes an array of tables as a key/value line:
+// aux = [{path = "/aux"}], or one element per line when that does not fit the
+// terminal. Callers must emit it before any section header.
+func renderTOMLTableArrayInline(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path string, depth int, opts tomlRenderOpts) {
+	slice, rv, isRV, ok := tableArraySlice(v)
 	if !ok {
-		return nil
+		return
 	}
 
 	pad := opts.ind(depth)
-	if tableArrayNeedsBlock(slice, k, opts.cols, opts.forceBlock) {
-		for _, elem := range slice {
-			cd, ok := elem.(kongfig.ConfigData)
-			if !ok {
-				continue
-			}
-			fmt.Fprintf(w, "\n%s%s\n", opts.ind(depth), s.Syntax("[[")+s.Key(tomlHeaderPath(path))+s.Syntax("]]"))
-			if err := renderMap(ctx, w, s, cd, path, "", depth+1, opts); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
 	if help := opts.help(ctx, path); help != "" {
 		fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
 	}
-	var valueStr string
+	styledKey := s.Key(tomlKey(k))
 	if isRV && rv.Redacted {
-		valueStr = s.Redacted(rv.RedactedDisplay)
-	} else {
-		valueStr = tomlArrayStyled(s, slice)
+		fmt.Fprintln(w, pad+styledKey+" = "+s.Redacted(rv.RedactedDisplay)+tomlAnnSuffix(ctx, rv, path, s, opts))
+		return
 	}
-	line := pad + s.Key(tomlKey(k)) + " = " + valueStr
+
+	elems := tableArrayElems(ctx, s, path, slice, opts)
+	valueStr := "[" + strings.Join(elems, ", ") + "]"
+	keyW := len(pad) + render.VisualWidth(styledKey)
+
+	// An array too long for one line still does not need a section header per
+	// entry: it is written one entry per line, the way an overflowing array of
+	// scalars is. The key stays a key/value line either way, so it keeps its
+	// place ahead of any header.
+	if opts.cols > 0 && keyW+3+render.VisualWidth(valueStr) > opts.cols {
+		if isRV && !opts.omitComments {
+			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+				fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+ann)
+			}
+		}
+		fmt.Fprintf(w, "%s%s = [\n", pad, styledKey)
+		for _, e := range elems {
+			fmt.Fprintf(w, "%s  %s,\n", pad, e)
+		}
+		fmt.Fprintf(w, "%s]\n", pad)
+		return
+	}
+
+	line := pad + styledKey + " = " + valueStr
 	if isRV {
 		line += tomlAnnSuffix(ctx, rv, path, s, opts)
 	}
 	fmt.Fprintln(w, line)
+}
+
+// tableArrayElems renders every element of a table-array as an inline table,
+// honoring the key order configured for path so the one-line, per-line and
+// [[section]] forms all order their keys the same way.
+func tableArrayElems(ctx context.Context, s kongfig.Styler, path string, slice []any, opts tomlRenderOpts) []string {
+	elems := make([]string, 0, len(slice))
+	for _, elem := range slice {
+		if cd, ok := elem.(kongfig.ConfigData); ok {
+			if opts.omitNil {
+				cd = stripNils(cd)
+			}
+			elems = append(elems, tomlInlineTableCtx(ctx, s, path, cd))
+			continue
+		}
+		elems = append(elems, tomlValueStyled(s, elem))
+	}
+	return elems
+}
+
+// renderTOMLTableArrayBlock writes an array of tables as [[path]] sections.
+func renderTOMLTableArrayBlock(ctx context.Context, w io.Writer, s kongfig.Styler, v any, path string, depth int, opts tomlRenderOpts) error {
+	slice, _, _, ok := tableArraySlice(v)
+	if !ok {
+		return nil
+	}
+	for _, elem := range slice {
+		cd, ok := elem.(kongfig.ConfigData)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(w, "\n%s%s\n", opts.ind(depth), s.Syntax("[[")+s.Key(tomlHeaderPath(path))+s.Syntax("]]"))
+		if err := renderMap(ctx, w, s, cd, path, "", depth+1, opts); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -591,12 +674,14 @@ func isTableArray(v any) bool {
 	return true
 }
 
-// tableArrayNeedsBlock reports whether a table-array should use [[...]] block
-// form instead of inline [{...}, ...] form. Returns true when forceBlock is set,
-// any element contains a nested ConfigData sub-tree (inline TOML can't express
-// nested tables), or the inline representation would exceed the terminal width.
-func tableArrayNeedsBlock(slice []any, key string, cols int, forceBlock bool) bool {
-	if forceBlock {
+// tableArrayNeedsBlock reports whether a table-array has to use [[...]] block
+// form rather than a key/value line. Returns true when forceBlock is set, when
+// an element contains a nested ConfigData sub-tree — inline TOML cannot express
+// a nested table, so those have no other form — or when a single element is too
+// wide for a line of its own. The width of the whole array does not decide it:
+// an array that overflows is written one element per line instead.
+func tableArrayNeedsBlock(slice []any, depth int, opts tomlRenderOpts) bool {
+	if opts.forceBlock {
 		return true
 	}
 	for _, elem := range slice {
@@ -609,10 +694,8 @@ func tableArrayNeedsBlock(slice []any, key string, cols int, forceBlock bool) bo
 				return true
 			}
 		}
-	}
-	if cols > 0 {
-		inline := tomlArray(toTOMLSlice(slice))
-		if len(key)+3+len(inline) > cols {
+		// "  {...}," on its own line, indented with the key that owns it.
+		if opts.cols > 0 && len(opts.ind(depth))+2+render.VisualWidth(tomlValue(cd))+1 > opts.cols {
 			return true
 		}
 	}
@@ -831,6 +914,60 @@ func tomlArrayStyled(s kongfig.Styler, vals []any) string {
 		parts[i] = tomlValueStyled(s, v)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// stripNils drops the keys holding a nil value, recursing into nested tables
+// and table arrays. TOML has no null: block tables skip those keys in
+// renderTOMLScalar, and an inline table has to skip them before it is
+// formatted, or Marshal writes `k = nil` and the document no longer parses.
+func stripNils(sub kongfig.ConfigData) kongfig.ConfigData {
+	out := make(kongfig.ConfigData, len(sub))
+	for k, v := range sub {
+		leaf := v
+		rv, isRV := v.(kongfig.RenderedValue)
+		if isRV {
+			leaf = rv.Value
+		}
+		if leaf == nil {
+			continue
+		}
+		stripped, changed := stripNilsValue(leaf)
+		switch {
+		case !changed:
+			out[k] = v
+		case isRV:
+			rv.Value = stripped
+			out[k] = rv
+		default:
+			out[k] = stripped
+		}
+	}
+	return out
+}
+
+// stripNilsValue rewrites tables and table arrays without their nil keys,
+// reporting whether anything had to be rebuilt.
+func stripNilsValue(v any) (any, bool) {
+	switch val := v.(type) {
+	case kongfig.ConfigData:
+		return stripNils(val), true
+	case []any:
+		out := make([]any, len(val))
+		changed := false
+		for i, elem := range val {
+			out[i] = elem
+			if sub, ok := elem.(kongfig.ConfigData); ok {
+				out[i] = stripNils(sub)
+				changed = true
+			}
+		}
+		if !changed {
+			return v, false
+		}
+		return out, true
+	default:
+		return v, false
+	}
 }
 
 // tomlInlineTableCtx formats a table as an inline table, honoring the key order

@@ -16,13 +16,22 @@ Every parser **must** implement:
 
 Every parser **should** also implement:
 
-| Interface                | Method                                                                   | Purpose                                                                             |
-| ------------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `kongfig.KeyOrderParser` | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)` | Preserve document key order for `--layers` rendering via `file.Provider.KeyOrder()` |
-| `kongfig.DocumentParser` | `UnmarshalDocument([]byte) (ConfigData, DocumentMeta, error)`            | Key order **and** per-path source positions from a single parse                     |
+| Interface                | Method                                                                   | Purpose                                                                  |
+| ------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `kongfig.KeyOrderParser` | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)` | Preserve document key order for rendering via `file.Provider.KeyOrder()` |
+| `kongfig.DocumentParser` | `UnmarshalDocument([]byte) (ConfigData, DocumentMeta, error)`            | Key order **and** per-path source positions from a single parse          |
+| `kongfig.CtxMarshaler`   | `MarshalCtx(context.Context, ConfigData) ([]byte, error)`                | Marshal that honours the render options in ctx, key order above all      |
 
-Without `KeyOrderParser`, layers mode falls back to struct field order (from `NewFor[T]`) or
-alphabetical. Implement it if your format's text encoding has a meaningful key order.
+Without `KeyOrderParser`, rendering falls back to struct field order (from `NewFor[T]`) or
+alphabetical. Implement it if your format's text encoding has a meaningful key order — the
+order feeds both `--layers` and the merged view, where the layers' orders are merged
+document-first ([Key order](render-pipeline.md#key-order)).
+
+A parser that reports key order should also implement `CtxMarshaler`, or it can read an order
+it cannot write back. Make `Marshal` the thin wrapper — `MarshalCtx(context.Background(), data)` —
+so there is one emitter and no way for the two paths to drift; `MarshalCtx` must stay correct
+with an empty context, since that is what a plain write gives it. See
+[CtxMarshaler](render-pipeline.md#ctxmarshaler).
 
 Add compile-time assertions to catch regressions early:
 
@@ -33,6 +42,7 @@ var (
     _ kongfig.OutputProvider  = Parser{}
     _ kongfig.KeyOrderParser  = Parser{}
     _ kongfig.DocumentParser  = Parser{}
+    _ kongfig.CtxMarshaler    = Parser{}
 )
 ```
 

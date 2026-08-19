@@ -19,6 +19,9 @@ kongfig:"name[,option[,option...]]"
 | `kongfig:"my-key,redacted=false"` | Key `"my-key"`, explicitly not redacted (overrides parent)        |
 | `kongfig:"my-key,inline"`         | Key `"my-key"`, table written on one line where the format allows |
 | `kongfig:"my-key,inline=5"`       | As above, but up to 5 keys instead of the renderer default        |
+| `kongfig:"my-key,overflow"`       | As `inline`, and kept compact even past the terminal width        |
+| `kongfig:"my-key,omitempty"`      | Key `"my-key"`, left out of output while it holds nothing         |
+| `kongfig:"my-key,sortby=field"`   | Map `"my-key"`, entries ordered by `field` inside each entry      |
 
 The name part is parsed by `parseTag(tag, fieldName)`: empty name falls back to `strings.ToLower(fieldName)`.
 
@@ -124,6 +127,13 @@ also fires for rendered leaf paths like `"labels.key1"` and `"labels[0]"`. Each 
 is emitted at most once per render call (first match wins; subsequent paths covered by the
 same key are silent).
 
+**A namespace is described where it is written**: `help=` on a struct or map field is the
+field's own text, not its children's, so a format with a place to put it puts it there — the
+TOML renderer writes it above the `[table]` header, and once above the first `[[block]]` of
+a table array. That is also where the once-per-render mark is spent, so the prefix match
+cannot re-attach the text to the first key inside the table, where it would read as
+documentation of that key. A renderer with nowhere to put such a text leaves it out.
+
 ---
 
 ## redacted option
@@ -193,9 +203,9 @@ back to a regular section. Plain `inline` (no `=N`) defers to the renderer's def
 `toml.DefaultInlineMaxKeys` (3).
 
 `schema.InlineTablePaths[T]()` returns the marked paths as `[]schema.InlineTableEntry`
-(`{Path, MaxKeys}`). `NewFor[T]` calls it automatically and publishes the result under
-[`kongfig.InlineTablesKey`], so both rendering and writing a config file pick it up with
-no extra wiring:
+(`{Path, MaxKeys, Overflow}`). `NewFor[T]` calls it automatically and publishes the result
+under [`kongfig.InlineTablesKey`], so both rendering and writing a config file pick it up
+with no extra wiring:
 
 ```go
 kf := kongfig.NewFor[Config]()          // "buckets.*" → 0, "tls" → 5
@@ -213,6 +223,106 @@ p := toml.New(
 
 See [render-pipeline.md](render-pipeline.md#toml-layout) for how the key limit interacts
 with terminal width.
+
+---
+
+## overflow option
+
+`kongfig:"name,overflow"` keeps the compact form even when it does not fit the terminal,
+instead of falling back to the format's roomier shape — a `[section]` for a table,
+`[[section]]` blocks for an array of tables. It implies `inline`, so it stands alone:
+
+```go
+type Config struct {
+    Rules []Rule `kongfig:"rules,overflow"`   // a line per rule, however narrow the terminal
+}
+```
+
+Use it where the shape carries the meaning. A list of two-key rules reads as a list even
+when the lines run past the edge of the window, while a section per rule buries it. Writing
+a config file never consults the terminal width, so the mark only changes rendered output.
+
+`NewFor[T]` publishes the marked paths under [`kongfig.InlineOverflowKey`] alongside the
+inline marks. The parser route is `toml.WithInlineOverflow("rules")`.
+
+---
+
+## omitempty option
+
+`kongfig:"name,omitempty"` leaves the key out of the output while it holds nothing: an
+empty string, a zero number, `false`, an empty list, map or table, or nothing at all.
+An unmarked key keeps showing its zero value, since a zero is still the configuration.
+
+The option is also read from the `toml:` and `yaml:` tags, so a struct that already
+carries encoder tags needs no second mark:
+
+```go
+type Config struct {
+    Tags  []string `kongfig:"tags,omitempty"`
+    Alias string   `kongfig:"alias" toml:"alias,omitempty"`
+}
+```
+
+A redacted value is never treated as empty — its placeholder stands in for a value that
+is set, and dropping the key would say the opposite.
+
+The mark applies to rendered output and to TOML config files written through
+`toml.Parser.MarshalCtx`. `NewFor[T]` publishes the marked paths under
+[`kongfig.OmitEmptyKey`]; renderers that cannot express absence ignore it. In TOML it
+also reaches inside inline tables and table arrays, where the reader cannot delete the
+key by hand afterwards. A table or object left with nothing to show is omitted with its
+key rather than written empty.
+
+## sortby option
+
+`kongfig:"name,sortby=field"` orders the entries of a map by a value inside them rather
+than alphabetically. Prefix the value name with `-` for descending order, which is the
+usual want when the value is a priority:
+
+```go
+type Rule struct {
+    Path     string `kongfig:"path"`
+    Priority int    `kongfig:"priority"`
+}
+
+type Config struct {
+    Rules map[string]Rule `kongfig:"rules,sortby=-priority"`
+}
+```
+
+Renders and writes the highest priority first, whatever the keys are called:
+
+```toml
+[rules.deny-admin]
+path = "/admin"
+priority = 10
+
+[rules.allow-all]
+path = "/"
+priority = 1
+```
+
+The spec may be dotted (`sortby=meta.priority`) to reach a value one level down. A map
+inside a map value type is marked the same way and matched through a `*` segment, so a
+mark on `Rules` inside `Profile` applies at `profiles.*.rules`.
+
+The mark belongs on a map. A struct's children are distinct fields, ordered by
+declaration, so a value inside them says nothing about their order — a mark on anything
+but a map is ignored.
+
+Entries whose value is missing, or of a kind the others are not, read last in both
+directions: they cannot be placed among the rest, and sorting them as a zero would
+claim a position they do not have. Entries that compare equal keep the order they would
+have had without the mark, so ties fall back to the document order rather than to map
+iteration.
+
+`NewFor[T]` publishes the marked paths under [`kongfig.KeySortByKey`], and the sort is
+applied by `render.OrderedKeys`, so it reaches rendered output and written config files
+alike. It sits below an explicit `WithRenderKeyOrder` and a `WithRenderKeySort`
+comparator, and above the order the documents and the struct fields reported — see
+[docs/render-pipeline.md](render-pipeline.md#key-order).
+
+---
 
 ---
 

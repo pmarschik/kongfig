@@ -250,10 +250,12 @@ The internal store is `map[string]any`. Types are not normalised at load time â€
    format-specific data (e.g. a YAML or TOML file). Required for `--layers` mode to use the
    correct native-format renderer for this layer instead of the fallback.
 6. Optionally implement `KeyOrderProvider` (`KeyOrder() map[string][]string`) to return the
-   key insertion order captured during `Load`. `Kongfig.Load` stores this in `Layer.KeyOrder`
-   so `RenderLayers` can reproduce the original document order for that layer. Without it,
-   `--layers` falls back to struct field order (from `NewFor[T]`) or alphabetical.
-   The built-in `file.Provider` delegates to the parser's `KeyOrderParser` interface.
+   key insertion order captured during `Load`. `Kongfig.Load` stores this in `Layer.KeyOrder`,
+   so `RenderLayers` reproduces the original document order for that layer and the merged
+   view reads in it too â€” see [Key order](render-pipeline.md#key-order) for how the layers
+   are merged and how document order relates to struct field order. Without it, rendering
+   falls back to struct field order (from `NewFor[T]`) or alphabetical. The built-in
+   `file.Provider` delegates to the parser's `KeyOrderParser` interface.
 7. Register via `k.Load(provider)`.
 
 ### RedactedPaths and NewFor

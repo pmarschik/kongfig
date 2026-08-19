@@ -320,9 +320,10 @@ work = { color = "blue", path = "/w" }
 
 Paths can also be marked on the parser directly with
 `tomlparser.WithInlineTables("buckets.*")`, and the key limit raised with
-`tomlparser.WithInlineMaxKeys(n)`. Rendering additionally falls back to a regular
-section when the inline form would not fit the terminal; writing never depends on
-terminal width.
+`tomlparser.WithInlineMaxKeys(n)`. Rendering additionally reflows the table across
+lines, one pair per line, when the one-line form would not fit the terminal
+(`tomlparser.WithInlineWrap(false)` falls back to a section instead); writing never
+depends on terminal width.
 
 See [docs/render-pipeline.md](docs/render-pipeline.md#toml-layout) and
 [docs/struct-tags.md](docs/struct-tags.md#inline-option).
@@ -384,6 +385,8 @@ For features beyond the above:
 - [docs/validation.md](docs/validation.md) — composite rule helpers, custom annotations,
   registry constructors, `ValidateOnLoad`
 - [docs/provenance.md](docs/provenance.md) — source labels, `FilterSource`, provenance API
+- [docs/render-pipeline.md](docs/render-pipeline.md) — key order (rendering and rewriting a
+  file in the order it was parsed), `CtxMarshaler`, TOML layout internals
 - [docs/architecture.md](docs/architecture.md) — load/render pipeline, internal design
 
 ## Development

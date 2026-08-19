@@ -146,6 +146,86 @@ Render options are passed as a `context.Context` enriched by `prepareRender`. Re
 
 Call-time options (`[]RenderOption`) are applied in `Kongfig.RenderWith` / `Kongfig.Render` before the `Renderer.Render` call. The root package exports `WithRender*` functions (e.g. `WithRenderNoComments()`, `WithRenderHelpTexts(...)`) that build `RenderOption` values.
 
+## Key order
+
+Nothing about a Go map remembers the order its keys were written in, so renderers get
+that order handed to them. `render.OrderedKeys(ctx, prefix, data)` is the single choke
+point: it reads the parent-path → ordered-child-names map bound in the context, emits the
+keys it names in that order, and appends anything left over alphabetically. Every
+renderer and the order-aware `MarshalCtx` funnel through it, so a key order established
+once applies to displayed and written output alike.
+
+Five rules can have a say about one parent, and `OrderedKeys` settles them in this order:
+
+1. `WithRenderKeyOrder` for this parent, under `RenderKeyOrderKey` — a caller stating the
+   order outright, so the sort hooks below are skipped entirely.
+2. `WithRenderKeySort`, a `KeySortFunc` under `RenderKeySortKey`.
+3. A `sortby=` mark for this parent, under `KeySortByKey`.
+4. The order kongfig derived, under `RenderDerivedKeyOrderKey` — the merge described
+   below.
+5. Alphabetical, for whatever nothing above placed.
+
+The two derived-order keys are separate for exactly this reason: an explicit order has to
+outrank the sort hooks, while the order kongfig worked out on its own is what those hooks
+reorder. Both are read by `render.KeyOrder`, explicit first.
+
+`prepareRender` binds the derived map for both the merged view and `--layers`, merging two
+sources:
+
+- **The documents.** Each layer records what its parser reported (`KeyOrderParser` /
+  `DocumentParser`) in `Layer.KeyOrder`. `Kongfig.KeyOrder()` merges those in pipeline
+  order: the first layer to mention a key at a parent path fixes where it reads, a later
+  layer that re-states the key does not move it, and keys only a later layer introduces
+  follow the ones that do. An override file therefore cannot reshuffle the base file's
+  document, and a layer with nothing to say about order — env, flags, structs — subtracts
+  nothing.
+- **The schema.** `NewFor[T]` collects struct field order into `RenderConfig.FieldOrder`.
+
+Where both have a say about a parent, **the document wins**: it is the one place a human
+wrote the keys down in an order they chose. Field order then supplies the keys no
+document mentioned, ahead of the alphabetical fallback. That covers the parents field
+order cannot reach at all — `schema.FieldOrderPaths` descends only into struct types, so
+map keys, and the fields of a struct inside a map, never get an entry. Declaration order
+is also the weaker signal in practice: `govet`'s `fieldalignment` autofix reorders struct
+fields for packing, which would silently re-sort rendered output that leaned on it.
+
+Two escape hatches sit above the merge:
+
+- `WithRenderKeyOrder(m)` at the call site replaces it outright — the caller has the last
+  word.
+- `WithLayerKeyOrder(m)` on `LoadParsed` attaches an order to a layer you parsed
+  yourself. Providers built on `providers/file.Provider` do this for you.
+
+### Order from a value
+
+Neither source above can order the entries of a map: the keys are data, and nothing in
+the schema or the document says which entry matters most. What does say is often a value
+inside the entries — a priority, a weight, a rank. A `sortby=` tag names it, and
+`WithRenderKeySort` handles what a tag cannot state:
+
+```go
+type Config struct {
+    Rules map[string]Rule `kongfig:"rules,sortby=-priority"`  // highest first
+}
+
+// or, for an order that has to be computed:
+kf.RenderWith(ctx, w, r, kongfig.WithRenderKeySort(
+    func(path string, keys []string, data kongfig.ConfigData) []string {
+        if path != "rules" { return keys }
+        return sortByWeight(keys, data)
+    }))
+```
+
+Both reorder the keys the rules below them produced, so a comparator is handed the
+`sortby` order and a `sortby` mark is handed the document's — which is what makes ties
+fall back to the document order instead of to map iteration. Values compare within their
+kind, and an entry whose value is missing or of another kind reads last in both
+directions rather than sorting as a zero. A comparator that drops or invents keys cannot
+change which keys are rendered: dropped keys are appended in the order they had, invented
+ones ignored.
+
+`sortby` is documented per-tag in [docs/struct-tags.md](struct-tags.md#sortby-option).
+
 ## OutputProvider
 
 `OutputProvider` is an optional interface on parsers/providers:
@@ -156,7 +236,27 @@ type OutputProvider interface {
 }
 ```
 
-When a parser implements it, `Bind` is called to produce a styled renderer. When it does not, `kongfig.Bind` falls back to a `passthroughRenderer` that marshals via `parser.Marshal` and writes plain bytes without styling. This keeps generic providers (structs, in-memory fixtures) free of rendering obligations while still allowing callers to render any `map[string]any` in any supported format regardless of how it was loaded.
+When a parser implements it, `Bind` is called to produce a styled renderer. When it does not, `kongfig.Bind` falls back to a `passthroughRenderer` that marshals via the parser and writes plain bytes without styling. This keeps generic providers (structs, in-memory fixtures) free of rendering obligations while still allowing callers to render any `map[string]any` in any supported format regardless of how it was loaded.
+
+## CtxMarshaler
+
+`Parser.Marshal` sees only the data, which leaves a passthrough render unable to honour anything the render call established — key order first among them. `CtxMarshaler` is the optional way out:
+
+```go
+type CtxMarshaler interface {
+    MarshalCtx(ctx context.Context, data ConfigData) ([]byte, error)
+}
+```
+
+`passthroughRenderer` prefers it and falls back to `Marshal`, so implementing it is additive: an existing parser keeps working, and one that adds `MarshalCtx` starts seeing the options — the [key order](#key-order) and its sort hooks, and for TOML the `,inline` marks under `InlineTablesKey`. All three built-in parsers implement it, each with `Marshal` reduced to `MarshalCtx(context.Background(), data)` so the two paths cannot drift. That makes the empty context the plain-write case, and every one of them is byte-for-byte what it wrote before when no order is bound — YAML and JSON both fall back to handing the map to their encoder, whose key sorting is not the plain alphabetical order `render.OrderedKeys` produces. That fast path asks `render.HasKeyOrder(ctx)` rather than reading one key, so a derived order or a sort hook is not silently dropped along with the explicit one.
+
+The same interface makes marshalling order-aware outside rendering entirely. `WithRenderKeyOrderCtx` builds the context, which is what lets a config file be rewritten in the order it was read:
+
+```go
+data, order, _ := parser.UnmarshalWithKeyOrder(src)
+// … modify data …
+out, _ := parser.MarshalCtx(kongfig.WithRenderKeyOrderCtx(ctx, order), data)
+```
 
 ## TOML layout
 
@@ -201,6 +301,9 @@ An inlinable table is only inlined if it passes the gates:
 | direct key count ≤ limit | yes    | yes     |
 | fits the terminal width  | yes    | no      |
 
+Failing the key-count gate demotes the table to a section. Failing the width gate reflows it
+across lines instead — see [Reflowing instead of demoting](#reflowing-instead-of-demoting).
+
 The key limit is `toml.DefaultInlineMaxKeys` (3), overridable globally with
 `toml.WithInlineMaxKeys(n)` or per path with `inline=N` in the struct tag (the per-path
 value wins when set). Only direct keys count toward the limit — a nested table inside a
@@ -208,6 +311,96 @@ candidate is emitted as a nested inline table.
 
 Terminal width is deliberately checked on the render path only: a file written to disk must
 not depend on the width of the terminal that happened to produce it.
+
+The width gate is waived for paths marked `toml.WithInlineOverflow("rules")` or tagged
+`kongfig:",overflow"`, which reach the parser through the `kongfig.InlineOverflowKey` path
+meta. An overflow mark implies an inline one, and it applies to both shapes the width gate
+governs: a table keeps its one line, and an array of tables keeps a line per entry instead
+of falling back to `[[section]]` blocks.
+
+### Reflowing instead of demoting
+
+An inline table too wide for its line is reflowed rather than demoted to a section: the
+brace opens the key's line, one pair follows per line, and the closing brace lines up under
+the key. This is a newline inside an inline table, which TOML 1.1 allows.
+
+```toml
+[fields]
+  blocked_by = {
+    jira = "",
+    link = {direction = "inward", type = "Blocks"},
+    readonly = false,
+    type = "issue_links"
+  }
+```
+
+The last pair takes no trailing comma — TOML 1.0 forbids one in an inline table, and the
+reflow keeps every rule but the newline. Pairs are indented one `WithIndent` level past the
+key; with `WithIndent("")` they get two spaces, so the shape survives flush-left output.
+
+There is no contest against the block form: the inline mark says the table is an entry
+rather than a section, and that reading holds at any width. A marked table reflows whenever
+it does not fit, however few pairs it has. Demotion comes only from the key-count gate or
+from `toml.WithInlineWrap(false)`.
+
+A value that is itself over the width expands in place, on the same terms it would get on a
+line of its own — a nested table reflows, an array becomes a block, a string folds:
+
+```toml
+[buckets]
+  stormtrooper = {
+    dirname = ".",
+    match = [
+      "github@ixo-corp",
+      "github@ixopay-org/*-agent*",
+    ],
+    nest = true,
+    vcs = "jj-colocate"
+  }
+```
+
+A value that fits is left on its line: expanding it would spend rows to say the same thing.
+
+Provenance rides the opening brace, the way an expanded array's rides its opening bracket —
+the comment belongs to the key, and no line of the table can come between the two. Put on
+the closing brace instead, the aligner could move it above that line, landing it between
+the pairs it annotates. An annotation with several groups that does not fit the opening
+line is written on comment lines above the whole entry.
+
+`toml.WithInlineWrap(false)` turns the reflow off for parsers whose rendered output is read
+back by a strict TOML 1.0 parser. A marked table that no longer fits then falls back to its
+own `[section]`; one that fits is still inlined. The same holds for the elements of a table
+array: with no wrapped form to weigh against the block form, an element too wide for the
+terminal turns the array into `[[block]]`s rather than spilling a newline into an inline
+table.
+
+Like the width gate itself, this is render-only: `Marshal` never reflows.
+
+### Folding long strings
+
+A string value too wide for the terminal is emitted as a multi-line basic string with a
+line-ending backslash, which trims the newline and the indentation that follows it:
+
+```toml
+description = """the archive keeps every build we shipped, \
+  so a restore can start from any release without asking \
+  the release team first"""
+```
+
+An element of an expanded array folds on the same terms, its continuations indented under
+the element and the comma following the closing delimiter:
+
+```toml
+remove = [ # file
+  """//*[local-name() = 'text' and namespace-uri() = \
+    'http://www.w3.org/2000/svg']""",
+]
+```
+
+The value is unchanged — the document reparses to the same string. Folds happen only at
+runs of spaces, so a value with nowhere to break (a long URL, a path) is left on its one
+line rather than split mid-token. Redacted values are never folded: the placeholder stands
+in for the value, and folding it would fold the placeholder. `Marshal` never folds.
 
 ## Bind: parser → renderer
 

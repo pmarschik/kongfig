@@ -105,6 +105,31 @@ var MapSplitSpecKey = NewPathMetaKey[MapSplitSpec]()
 // [schema.InlineTablePaths]). Renderers that cannot express inline tables ignore it.
 var InlineTablesKey = NewPathMetaKey[int]()
 
+// InlineOverflowKey is the [PathMetaKey] for paths whose compact one-line form
+// is kept even when the line does not fit the terminal, instead of falling back
+// to the format's roomier shape. Keys are dot-path patterns matched the same way
+// as [InlineTablesKey]'s.
+//
+// Use it for a value whose shape carries the meaning — a list of two-key rules,
+// say — where a section per entry costs more than a line running past the edge
+// of the window. It has no effect when writing a config file, which never
+// consults the terminal.
+//
+// Populated automatically by [NewFor] from the overflow struct tag option, which
+// implies inline (see [schema.InlineTablePaths]).
+var InlineOverflowKey = NewPathMetaKey[bool]()
+
+// OmitEmptyKey is the [PathMetaKey] for paths that are left out of output when
+// they hold nothing — an empty string, a zero number, false, an empty list, map
+// or table, or nothing at all. Keys are dot-path patterns matched the same way
+// as [InlineTablesKey]'s. A redacted value is never treated as empty.
+//
+// Populated automatically by [NewFor] from the omitempty option in the kongfig,
+// toml or yaml struct tag (see [schema.OmitEmptyPaths]). It applies both to
+// written config files and to rendered output; paths without the mark keep
+// showing their zero values.
+var OmitEmptyKey = NewPathMetaKey[bool]()
+
 // codecPathsKey is the private [PathMetaKey] for path → anyCodec maps stored in pathMeta.
 // Set by withCodecPathResolution (called from NewFor[T]); consumed at load time
 // (commitLayer) and render time (wrapRenderData).

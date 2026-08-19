@@ -401,15 +401,48 @@ func BlockCollections(ctx context.Context) bool {
 // KeyOrder returns the ordered child key names for the given parent dot-path from ctx.
 // Returns nil when no order is set or the path is not found in the order map.
 // Renderers use this to emit keys in struct field order rather than alphabetically.
+//
+// An explicit order from [kongfig.WithRenderKeyOrder] answers first; where a
+// caller set none, the order kongfig derived from the loaded documents and the
+// struct fields does (see [kongfig.RenderDerivedKeyOrderKey]).
 func KeyOrder(ctx context.Context, prefix string) []string {
+	if order := explicitKeyOrder(ctx, prefix); len(order) > 0 {
+		return order
+	}
+	orders, _ := kongfig.RenderDerivedKeyOrderKey.Read(ctx)
+	return orders[prefix]
+}
+
+func explicitKeyOrder(ctx context.Context, prefix string) []string {
 	orders, _ := kongfig.RenderKeyOrderKey.Read(ctx)
 	return orders[prefix]
 }
 
-// OrderedKeys returns the keys of data sorted by the key order for prefix from ctx,
-// with any keys not in the order appended alphabetically.
+// OrderedKeys returns the keys of data in the order they should be rendered
+// under the parent path prefix, which is where every rule about key order meets:
+//
+//  1. an explicit [kongfig.WithRenderKeyOrder] for this parent — a caller saying
+//     exactly what it wants, so the sort hooks below are left out;
+//  2. a [kongfig.KeySortFunc] from [kongfig.WithRenderKeySort];
+//  3. a sortby= mark for this parent ([kongfig.KeySortByKey]), ordering the
+//     entries of a map by a value inside them;
+//  4. the order kongfig derived — what the loaded documents reported, overlaid
+//     on struct field order;
+//  5. alphabetical, for the keys nothing above placed.
+//
+// The sorts are stable: keys that compare equal keep the order the rules below
+// gave them.
 func OrderedKeys(ctx context.Context, prefix string, data kongfig.ConfigData) []string {
-	ordered := KeyOrder(ctx, prefix)
+	if pinned := explicitKeyOrder(ctx, prefix); len(pinned) > 0 {
+		return arrangeKeys(pinned, data)
+	}
+	keys := arrangeKeys(KeyOrder(ctx, prefix), data)
+	return sortKeys(ctx, prefix, data, keys)
+}
+
+// arrangeKeys returns the keys of data in the given order, with the keys the
+// order does not mention appended alphabetically.
+func arrangeKeys(ordered []string, data kongfig.ConfigData) []string {
 	if len(ordered) == 0 {
 		keys := make([]string, 0, len(data))
 		for k := range data {
@@ -421,7 +454,7 @@ func OrderedKeys(ctx context.Context, prefix string, data kongfig.ConfigData) []
 	seen := make(map[string]bool, len(data))
 	result := make([]string, 0, len(data))
 	for _, k := range ordered {
-		if _, ok := data[k]; ok {
+		if _, ok := data[k]; ok && !seen[k] {
 			result = append(result, k)
 			seen[k] = true
 		}

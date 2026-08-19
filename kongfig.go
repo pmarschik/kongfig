@@ -228,6 +228,15 @@ func New(opts ...Option) *Kongfig {
 // Fields tagged "inline" are published under [InlineTablesKey], letting formats
 // with a compact table syntax (TOML inline tables) emit them on one line when
 // they are short enough — both when rendering and when writing a config file.
+// Fields tagged "overflow" are published under [InlineOverflowKey] as well, so
+// the compact form survives a line too wide for the terminal.
+//
+// Fields tagged "omitempty" — in the kongfig, toml or yaml tag — are published
+// under [OmitEmptyKey], so formats that can express absence leave them out of
+// rendered and written output while they hold nothing.
+//
+// A map field tagged "sortby=field" is published under [KeySortByKey], so its
+// entries read in the order of a value inside them rather than alphabetically.
 //
 // Additional options (e.g. [WithLogger], [WithRedactionFunc]) may be passed;
 // they are applied after the auto-derived redacted paths, so [WithRedacted]
@@ -256,10 +265,23 @@ func NewFor[T any](opts ...Option) *Kongfig {
 	}
 	if inlines := schema.InlineTablePaths[T](); len(inlines) > 0 {
 		entries := make(map[string]int, len(inlines))
+		overflows := make(map[string]bool)
 		for _, e := range inlines {
 			entries[e.Path] = e.MaxKeys
+			if e.Overflow {
+				overflows[e.Path] = true
+			}
 		}
 		opts = append([]Option{WithPathMeta(InlineTablesKey, entries)}, opts...)
+		if len(overflows) > 0 {
+			opts = append([]Option{WithPathMeta(InlineOverflowKey, overflows)}, opts...)
+		}
+	}
+	if omitEmpty := schema.OmitEmptyPaths[T](); len(omitEmpty) > 0 {
+		opts = append([]Option{WithPathMeta(OmitEmptyKey, omitEmpty)}, opts...)
+	}
+	if sortBy := schema.KeySortByPaths[T](); len(sortBy) > 0 {
+		opts = append([]Option{WithPathMeta(KeySortByKey, sortBy)}, opts...)
 	}
 	fieldOrder := schema.FieldOrderPaths[T]()
 	if len(fieldOrder) > 0 {

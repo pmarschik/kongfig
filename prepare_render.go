@@ -3,6 +3,7 @@ package kongfig
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -63,9 +64,17 @@ func prepareRender(ctx context.Context, kf *Kongfig, opts ...RenderOption) (Conf
 			ro.bind(renderRedactFnKey, cfg.RedactFn)
 		}
 	}
-	if _, ok := readOpts[map[string][]string](ro, RenderKeyOrderKey); !ok {
-		if cfg.FieldOrder != nil {
-			ro.bind(RenderKeyOrderKey, cfg.FieldOrder)
+	// The derived order goes under its own key: a caller's explicit order outranks
+	// the sort hooks, while what kongfig worked out from the documents and the
+	// struct fields is what those hooks reorder.
+	_, explicit := readOpts[map[string][]string](ro, RenderKeyOrderKey)
+	_, inherited := readOpts[map[string][]string](ro, RenderDerivedKeyOrderKey)
+	if !explicit && !inherited {
+		kf.mu.RLock()
+		docOrder := kf.keyOrderLocked()
+		kf.mu.RUnlock()
+		if merged := mergeKeyOrders(docOrder, cfg.FieldOrder); merged != nil {
+			ro.bind(RenderDerivedKeyOrderKey, merged)
 		}
 	}
 	if _, ok := readOpts[map[string]string](ro, RenderHelpTextsKey); !ok {
@@ -158,4 +167,41 @@ func wrapRenderData(m ConfigData, sourceMetas map[string]SourceMeta, ro renderOp
 		out[k] = rv
 	}
 	return out
+}
+
+// mergeKeyOrders overlays the key order the documents reported on the order the
+// schema declares. A document says what its author wanted read first, so it wins
+// for the parents it mentions; the schema supplies the keys no document mentioned,
+// which is every key of a map or of a struct inside one, since field order is
+// only collected for struct types. Returns nil when neither has anything to say.
+func mergeKeyOrders(doc, field map[string][]string) map[string][]string {
+	switch {
+	case len(doc) == 0:
+		return field
+	case len(field) == 0:
+		return doc
+	}
+	merged := make(map[string][]string, len(doc)+len(field))
+	maps.Copy(merged, doc)
+	for parent, keys := range field {
+		docKeys, both := merged[parent]
+		if !both {
+			merged[parent] = keys
+			continue
+		}
+		// Both have a say about this parent: the document orders what it mentioned,
+		// and the schema places the rest ahead of the alphabetical fallback.
+		seen := make(map[string]bool, len(docKeys))
+		for _, k := range docKeys {
+			seen[k] = true
+		}
+		combined := docKeys
+		for _, k := range keys {
+			if !seen[k] {
+				combined = append(combined, k)
+			}
+		}
+		merged[parent] = combined
+	}
+	return merged
 }

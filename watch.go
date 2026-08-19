@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 )
 
@@ -81,7 +82,9 @@ func (k *Kongfig) reloadEntry(w watchEntry, rawData ConfigData) error {
 	// Find the last pipeline entry for this source and update its snapshot.
 	k.mu.Lock()
 	pipelineIdx := -1
-	for i := len(k.pipeline) - 1; i >= 0; i-- {
+	// Index-only range: pipelineEntry is large enough that binding the value
+	// copies it on every iteration (gocritic rangeValCopy).
+	for i := range slices.Backward(k.pipeline) {
 		if !k.pipeline[i].isDerive && k.pipeline[i].layer.Meta.Name == w.source {
 			pipelineIdx = i
 			break

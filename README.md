@@ -299,6 +299,34 @@ type Config struct {
 kf := kongfig.NewFor[Config]()
 ```
 
+## TOML layout
+
+The TOML parser indents nested tables by depth and can emit short tables inline —
+on both render and write:
+
+```go
+type Config struct {
+    Buckets map[string]Bucket `kongfig:"buckets,inline"` // ≤3 keys → one line
+}
+
+kf := kongfig.NewFor[Config]()   // publishes the marked paths to the parser
+p := tomlparser.New(tomlparser.WithIndent("  "))
+```
+
+```toml
+[buckets]
+work = { color = "blue", path = "/w" }
+```
+
+Paths can also be marked on the parser directly with
+`tomlparser.WithInlineTables("buckets.*")`, and the key limit raised with
+`tomlparser.WithInlineMaxKeys(n)`. Rendering additionally falls back to a regular
+section when the inline form would not fit the terminal; writing never depends on
+terminal width.
+
+See [docs/render-pipeline.md](docs/render-pipeline.md#toml-layout) and
+[docs/struct-tags.md](docs/struct-tags.md#inline-option).
+
 ## Validation
 
 The `kongfig/validation` sub-package (core module, no extra dependencies) provides

@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	kongfig "github.com/pmarschik/kongfig"
@@ -15,7 +18,42 @@ import (
 )
 
 // Parser implements [kongfig.Parser] for TOML.
-type Parser struct{}
+//
+// The zero value is ready to use and indents nested tables by two spaces.
+// Use [New] with [WithIndent], [WithInlineTables] and [WithInlineMaxKeys] to
+// configure layout; the settings apply to both [Parser.Marshal] and rendering.
+type Parser struct {
+	indent         *string
+	inlineMaxKeys  *int
+	inlinePatterns []string
+}
+
+// defaultIndent is the per-level indentation applied to nested tables when the
+// parser does not configure one.
+const defaultIndent = "  "
+
+// DefaultInlineMaxKeys is the number of direct keys a marked table may hold and
+// still be emitted as an inline table when [WithInlineMaxKeys] is not used.
+const DefaultInlineMaxKeys = 3
+
+// effectiveIndent returns the configured indentation, or the default when unset.
+func (p Parser) effectiveIndent() string {
+	if p.indent == nil {
+		return defaultIndent
+	}
+	return *p.indent
+}
+
+// inlinePolicyFor builds the policy shared by Marshal and Render. checkWidth is
+// set only on the render path: written files must not depend on the width of the
+// terminal that happened to produce them.
+func (p Parser) inlinePolicyFor(checkWidth bool) inlinePolicy {
+	limit := DefaultInlineMaxKeys
+	if p.inlineMaxKeys != nil {
+		limit = *p.inlineMaxKeys
+	}
+	return inlinePolicy{patterns: p.inlinePatterns, defaultMax: limit, checkWidth: checkWidth}
+}
 
 // Default is a ready-to-use Parser instance.
 var Default = &Parser{}
@@ -71,14 +109,54 @@ func (Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]
 }
 
 // Marshal encodes a map to TOML bytes.
-// The returned bytes always end with a trailing newline (added by the TOML encoder).
-func (Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
+// The returned bytes always end with a trailing newline.
+//
+// Marshal shares its emitter with [Parser.Bind], so indentation and inline-table
+// settings apply equally to written files and to rendered output. It differs
+// from rendering in three ways: no comments or source annotations are written,
+// terminal width is ignored, and nil values are dropped rather than displayed.
+func (p Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
+	return p.MarshalCtx(context.Background(), data)
+}
+
+// MarshalCtx is [Parser.Marshal] with a context, so inline-table marks derived
+// from ,inline struct tags ([kongfig.InlineTablesKey], injected by
+// [kongfig.NewFor]) also apply when writing a config file. Terminal width is
+// ignored either way.
+func (p Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte, error) {
+	opts := tomlRenderOpts{
+		indent:       p.effectiveIndent(),
+		inline:       p.inlinePolicyFor(false),
+		omitNil:      true,
+		omitComments: true,
+	}
+	opts.inline.ctxPaths = kongfig.InlineTablesKey.GetAll(ctx)
 	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(data); err != nil {
+	if err := renderMap(ctx, &buf, identityStyler{}, kongfig.ToConfigData(data), "", "", 0, opts); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	// The emitter separates top-level sections with a leading blank line, which
+	// is noise at the very start of a file.
+	return bytes.TrimLeft(buf.Bytes(), "\n"), nil
 }
+
+// identityStyler returns every token unchanged, so the emitter produces plain
+// TOML for [Parser.Marshal].
+type identityStyler struct{}
+
+func (identityStyler) Key(s string) string           { return s }
+func (identityStyler) String(s string) string        { return s }
+func (identityStyler) Number(s string) string        { return s }
+func (identityStyler) Bool(s string) string          { return s }
+func (identityStyler) Null(s string) string          { return s }
+func (identityStyler) Syntax(s string) string        { return s }
+func (identityStyler) Comment(s string) string       { return s }
+func (identityStyler) Annotation(_, s string) string { return s }
+func (identityStyler) SourceKind(s string) string    { return s }
+func (identityStyler) SourceData(s string) string    { return s }
+func (identityStyler) SourceKey(s string) string     { return s }
+func (identityStyler) Redacted(s string) string      { return s }
+func (identityStyler) Codec(s string) string         { return s }
 
 // Format returns the parser's format name for source label composition.
 func (Parser) Format() string { return "toml" }
@@ -93,16 +171,99 @@ func (p Parser) Bind(s kongfig.Styler) kongfig.Renderer {
 
 // renderer writes TOML with token-level styling.
 type renderer struct {
-	p Parser
 	s kongfig.Styler
+	p Parser
 }
 
 // tomlRenderOpts groups the layout options that are computed once per Render call
 // and shared across all recursive rendering functions.
 type tomlRenderOpts struct {
-	cols       int
-	forceBlock bool
-	align      bool
+	indent       string
+	inline       inlinePolicy
+	cols         int
+	forceBlock   bool
+	align        bool
+	omitNil      bool
+	omitComments bool
+}
+
+// help returns the help text for path, or "" when comments are suppressed.
+func (o tomlRenderOpts) help(ctx context.Context, path string) string {
+	if o.omitComments {
+		return ""
+	}
+	return render.HelpText(ctx, path)
+}
+
+// ind returns the indentation prefix for content nested depth levels deep.
+func (o tomlRenderOpts) ind(depth int) string {
+	if o.indent == "" || depth <= 0 {
+		return ""
+	}
+	return strings.Repeat(o.indent, depth)
+}
+
+// inlinePolicy decides which tables may collapse into TOML inline tables.
+type inlinePolicy struct {
+	// ctxPaths are the marks carried in the render context by
+	// [kongfig.InlineTablesKey], i.e. those derived from ,inline struct tags.
+	// A value of 0 defers to defaultMax.
+	ctxPaths map[string]int
+	// patterns are the marks configured on the parser via [WithInlineTables].
+	patterns   []string
+	defaultMax int
+	checkWidth bool
+}
+
+func (ip inlinePolicy) empty() bool { return len(ip.patterns) == 0 && len(ip.ctxPaths) == 0 }
+
+// maxKeysFor reports whether path is marked for inlining and, if so, how many
+// direct keys the table may hold. Patterns are matched segment by segment; a "*"
+// segment matches any single segment. When several context marks match, the
+// largest explicit limit wins, so the result does not depend on map order.
+func (ip inlinePolicy) maxKeysFor(path string) (int, bool) {
+	if path == "" {
+		return 0, false
+	}
+	segs := strings.Split(path, ".")
+
+	marked := false
+	for _, pat := range ip.patterns {
+		if matchPathPattern(strings.Split(pat, "."), segs) {
+			marked = true
+			break
+		}
+	}
+	explicit := 0
+	for pat, n := range ip.ctxPaths {
+		if !matchPathPattern(strings.Split(pat, "."), segs) {
+			continue
+		}
+		marked = true
+		if n > explicit {
+			explicit = n
+		}
+	}
+
+	if !marked {
+		return 0, false
+	}
+	if explicit > 0 {
+		return explicit, true
+	}
+	return ip.defaultMax, true
+}
+
+func matchPathPattern(pat, segs []string) bool {
+	if len(pat) != len(segs) {
+		return false
+	}
+	for i, p := range pat {
+		if p != "*" && p != segs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigData) error {
@@ -110,46 +271,62 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 	opts := tomlRenderOpts{
 		cols:       tty.Cols,
 		forceBlock: render.BlockCollections(ctx),
+		indent:     r.p.effectiveIndent(),
+		inline:     r.p.inlinePolicyFor(true),
 	}
+	opts.inline.ctxPaths = kongfig.InlineTablesKey.GetAll(ctx)
 	if !render.AlignSources(ctx) {
-		return renderMap(ctx, w, r.s, data, "", "", opts)
+		return renderMap(ctx, w, r.s, data, "", "", 0, opts)
 	}
 	// Two-pass: render with annotation markers, then align.
 	opts.align = true
 	var buf bytes.Buffer
-	if err := renderMap(ctx, &buf, r.s, data, "", "", opts); err != nil {
+	if err := renderMap(ctx, &buf, r.s, data, "", "", 0, opts); err != nil {
 		return err
 	}
 	return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 }
 
-func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix, tableHeader string, opts tomlRenderOpts) error {
+// renderMap writes one table level. depth is the number of path segments owned by
+// this level: 0 for the document root, 1 for [a], 2 for [a.b]. The table header is
+// indented depth-1 levels and the keys it owns depth levels, matching the layout the
+// TOML encoder produces for nested tables.
+func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix, tableHeader string, depth int, opts tomlRenderOpts) error {
 	keys := render.OrderedKeys(ctx, prefix, data)
 
 	// Scalars first, then tables, then table-arrays (TOML convention: scalars must precede section headers)
 	scalars, tables, tableArrs := classifyTOMLKeys(data, keys)
+	// Inlined tables are key/value lines, so they must join the scalars ahead of
+	// any header — anything after a header would belong to that section instead.
+	inlines, tables := splitInlineTables(ctx, s, data, tables, prefix, depth, opts)
 
-	// Print table header only when this level owns scalars; sub-table-only
-	// sections are implied by their children's headers in TOML.
-	if tableHeader != "" && len(scalars) > 0 {
-		fmt.Fprintf(w, "\n%s\n", s.Syntax("[")+s.Key(tableHeader)+s.Syntax("]"))
+	// Every table level owns a header. Top-level tables are preceded by a blank
+	// line; nested ones sit directly under their parent.
+	if tableHeader != "" {
+		if depth <= 1 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "%s%s\n", opts.ind(depth-1), s.Syntax("[")+s.Key(tomlHeaderPath(tableHeader))+s.Syntax("]"))
 	}
 
 	for _, k := range scalars {
 		path := buildTOMLPath(prefix, k)
-		if err := renderTOMLScalar(ctx, w, s, k, data[k], path, opts); err != nil {
+		if err := renderTOMLScalar(ctx, w, s, k, data[k], path, depth, opts); err != nil {
 			return err
 		}
 	}
+	for _, in := range inlines {
+		renderTOMLInline(ctx, w, s, in, depth, opts)
+	}
 	for _, k := range tables {
 		path := buildTOMLPath(prefix, k)
-		if err := renderTOMLTable(ctx, w, s, data[k], path, opts); err != nil {
+		if err := renderTOMLTable(ctx, w, s, data[k], path, depth+1, opts); err != nil {
 			return err
 		}
 	}
 	for _, k := range tableArrs {
 		path := buildTOMLPath(prefix, k)
-		if err := renderTOMLTableArray(ctx, w, s, k, data[k], path, opts); err != nil {
+		if err := renderTOMLTableArray(ctx, w, s, k, data[k], path, depth, opts); err != nil {
 			return err
 		}
 	}
@@ -189,7 +366,7 @@ func classifyTOMLKeys(data kongfig.ConfigData, keys []string) (scalars, tables, 
 	return scalars, tables, tableArrs
 }
 
-func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path string, opts tomlRenderOpts) error {
+func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path string, depth int, opts tomlRenderOpts) error {
 	rv, isRV := v.(kongfig.RenderedValue)
 	var leafVal any
 	if isRV {
@@ -198,36 +375,128 @@ func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k stri
 		leafVal = v
 	}
 
-	if help := render.HelpText(ctx, path); help != "" {
-		fmt.Fprintf(w, "%s\n", s.Comment("# "+help))
-	}
-
-	inline := tomlValue(leafVal)
-	keyW := render.VisualWidth(s.Key(k))
-
-	if isTOMLArray(leafVal) && (opts.forceBlock || (opts.cols > 0 && keyW+3+render.VisualWidth(inline) > opts.cols)) {
-		if isRV {
-			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-				fmt.Fprintf(w, "%s\n", s.Comment("# ")+ann)
-			}
-		}
-		fmt.Fprintf(w, "%s = [\n", s.Key(k))
-		for _, elem := range toTOMLSlice(leafVal) {
-			fmt.Fprintf(w, "  %s,\n", tomlValueStyled(s, elem))
-		}
-		fmt.Fprintln(w, "]")
+	if leafVal == nil && opts.omitNil {
 		return nil
 	}
 
-	line := s.Key(k) + " = " + render.Value(s, v, inline)
+	pad := opts.ind(depth)
+	if help := opts.help(ctx, path); help != "" {
+		fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
+	}
+
+	inline := tomlValue(leafVal)
+	styledKey := s.Key(tomlKey(k))
+	keyW := render.VisualWidth(styledKey) + len(pad)
+
+	if isTOMLArray(leafVal) && (opts.forceBlock || (opts.cols > 0 && keyW+3+render.VisualWidth(inline) > opts.cols)) {
+		if isRV && !opts.omitComments {
+			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+				fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+ann)
+			}
+		}
+		fmt.Fprintf(w, "%s%s = [\n", pad, styledKey)
+		elemPad := pad + "  "
+		for _, elem := range toTOMLSlice(leafVal) {
+			fmt.Fprintf(w, "%s%s,\n", elemPad, tomlValueStyled(s, elem))
+		}
+		fmt.Fprintf(w, "%s]\n", pad)
+		return nil
+	}
+
+	line := pad + styledKey + " = " + render.Value(s, v, inline)
 	if isRV {
-		line += tomlAnnSuffix(ctx, rv, path, s, opts.align)
+		line += tomlAnnSuffix(ctx, rv, path, s, opts)
 	}
 	fmt.Fprintln(w, line)
 	return nil
 }
 
-func renderTOMLTable(ctx context.Context, w io.Writer, s kongfig.Styler, v any, path string, opts tomlRenderOpts) error {
+// inlineEntry is a table that passed the inline policy, together with the
+// already-rendered value so the width check and the emission agree.
+type inlineEntry struct {
+	key   string
+	path  string
+	value any
+	// rendered is the styled "{k = v, ...}" form, or the redacted placeholder.
+	rendered string
+}
+
+// splitInlineTables partitions tables into the ones that may be emitted inline
+// and the ones that keep their own section header.
+func splitInlineTables(ctx context.Context, s kongfig.Styler, data kongfig.ConfigData, tables []string, prefix string, depth int, opts tomlRenderOpts) (inlines []inlineEntry, blocks []string) {
+	if opts.inline.empty() {
+		return nil, tables
+	}
+	for _, k := range tables {
+		path := buildTOMLPath(prefix, k)
+		if e, ok := inlineCandidate(ctx, s, k, data[k], path, depth, opts); ok {
+			inlines = append(inlines, e)
+			continue
+		}
+		blocks = append(blocks, k)
+	}
+	return inlines, blocks
+}
+
+// inlineCandidate reports whether the table at path may be written inline, and
+// returns its rendered form when it may.
+func inlineCandidate(ctx context.Context, s kongfig.Styler, k string, v any, path string, depth int, opts tomlRenderOpts) (inlineEntry, bool) {
+	if opts.forceBlock {
+		return inlineEntry{}, false
+	}
+	maxKeys, marked := opts.inline.maxKeysFor(path)
+	if !marked {
+		return inlineEntry{}, false
+	}
+	sub, ok := asConfigData(v)
+	if !ok || len(sub) > maxKeys {
+		return inlineEntry{}, false
+	}
+
+	e := inlineEntry{key: k, path: path, value: v}
+	if rv, isRV := v.(kongfig.RenderedValue); isRV && rv.Redacted {
+		e.rendered = s.Redacted(rv.RedactedDisplay)
+	} else {
+		e.rendered = tomlInlineTableCtx(ctx, s, path, sub)
+	}
+
+	// Width only gates the terminal; a written file must not depend on the size
+	// of the terminal that produced it.
+	if opts.inline.checkWidth && opts.cols > 0 {
+		width := len(opts.ind(depth)) + render.VisualWidth(s.Key(tomlKey(k))) + 3 + render.VisualWidth(e.rendered)
+		if width > opts.cols {
+			return inlineEntry{}, false
+		}
+	}
+	return e, true
+}
+
+func renderTOMLInline(ctx context.Context, w io.Writer, s kongfig.Styler, e inlineEntry, depth int, opts tomlRenderOpts) {
+	pad := opts.ind(depth)
+	if help := opts.help(ctx, e.path); help != "" {
+		fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
+	}
+	line := pad + s.Key(tomlKey(e.key)) + " = " + e.rendered
+	if rv, ok := e.value.(kongfig.RenderedValue); ok {
+		line += tomlAnnSuffix(ctx, rv, e.path, s, opts)
+	}
+	fmt.Fprintln(w, line)
+}
+
+// asConfigData unwraps v to the table it holds, if any.
+func asConfigData(v any) (kongfig.ConfigData, bool) {
+	switch val := v.(type) {
+	case kongfig.ConfigData:
+		return val, true
+	case kongfig.RenderedValue:
+		if cd, ok := val.Value.(kongfig.ConfigData); ok {
+			return cd, true
+		}
+	}
+	return nil, false
+}
+
+func renderTOMLTable(ctx context.Context, w io.Writer, s kongfig.Styler, v any, path string, depth int, opts tomlRenderOpts) error {
 	var sub kongfig.ConfigData
 	switch val := v.(type) {
 	case kongfig.RenderedValue:
@@ -238,7 +507,7 @@ func renderTOMLTable(ctx context.Context, w io.Writer, s kongfig.Styler, v any, 
 		sub = val
 	}
 	var buf bytes.Buffer
-	if err := renderMap(ctx, &buf, s, sub, path, path, opts); err != nil {
+	if err := renderMap(ctx, &buf, s, sub, path, path, depth, opts); err != nil {
 		return err
 	}
 	if buf.Len() > 0 {
@@ -248,7 +517,7 @@ func renderTOMLTable(ctx context.Context, w io.Writer, s kongfig.Styler, v any, 
 	return nil
 }
 
-func renderTOMLTableArray(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path string, opts tomlRenderOpts) error {
+func renderTOMLTableArray(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path string, depth int, opts tomlRenderOpts) error {
 	rv, isRV := v.(kongfig.RenderedValue)
 	var rawSlice any
 	if isRV {
@@ -261,22 +530,23 @@ func renderTOMLTableArray(ctx context.Context, w io.Writer, s kongfig.Styler, k 
 		return nil
 	}
 
+	pad := opts.ind(depth)
 	if tableArrayNeedsBlock(slice, k, opts.cols, opts.forceBlock) {
 		for _, elem := range slice {
 			cd, ok := elem.(kongfig.ConfigData)
 			if !ok {
 				continue
 			}
-			fmt.Fprintf(w, "\n%s\n", s.Syntax("[[")+s.Key(path)+s.Syntax("]]"))
-			if err := renderMap(ctx, w, s, cd, path, "", opts); err != nil {
+			fmt.Fprintf(w, "\n%s%s\n", opts.ind(depth), s.Syntax("[[")+s.Key(tomlHeaderPath(path))+s.Syntax("]]"))
+			if err := renderMap(ctx, w, s, cd, path, "", depth+1, opts); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	if help := render.HelpText(ctx, path); help != "" {
-		fmt.Fprintf(w, "%s\n", s.Comment("# "+help))
+	if help := opts.help(ctx, path); help != "" {
+		fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
 	}
 	var valueStr string
 	if isRV && rv.Redacted {
@@ -284,20 +554,23 @@ func renderTOMLTableArray(ctx context.Context, w io.Writer, s kongfig.Styler, k 
 	} else {
 		valueStr = tomlArrayStyled(s, slice)
 	}
-	line := s.Key(k) + " = " + valueStr
+	line := pad + s.Key(tomlKey(k)) + " = " + valueStr
 	if isRV {
-		line += tomlAnnSuffix(ctx, rv, path, s, opts.align)
+		line += tomlAnnSuffix(ctx, rv, path, s, opts)
 	}
 	fmt.Fprintln(w, line)
 	return nil
 }
 
-func tomlAnnSuffix(ctx context.Context, rv kongfig.RenderedValue, path string, s kongfig.Styler, align bool) string {
+func tomlAnnSuffix(ctx context.Context, rv kongfig.RenderedValue, path string, s kongfig.Styler, opts tomlRenderOpts) string {
+	if opts.omitComments {
+		return ""
+	}
 	ann := render.Annotation(ctx, rv, path, s)
 	if ann == "" {
 		return ""
 	}
-	if align {
+	if opts.align {
 		return render.AnnMarker + "  " + s.Comment("# ") + ann
 	}
 	return "  " + s.Comment("# ") + ann
@@ -376,18 +649,10 @@ func tomlValue(v any) string {
 	if v == nil {
 		return "nil"
 	}
+	if out, ok := tomlLeaf(v); ok {
+		return out
+	}
 	switch val := v.(type) {
-	case string:
-		return fmt.Sprintf("%q", val)
-	case bool:
-		if val {
-			return "true"
-		}
-		return "false"
-	case int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64:
-		return fmt.Sprintf("%v", val)
 	case []any:
 		return tomlArray(val)
 	case []string:
@@ -430,6 +695,32 @@ func tomlValueReflect(val any) string {
 	return fmt.Sprintf("%q", strings.TrimSpace(fmt.Sprintf("%v", val)))
 }
 
+// tomlLeaf formats the scalar kinds that have a direct TOML spelling.
+// ok is false for containers, which the caller handles.
+func tomlLeaf(v any) (string, bool) {
+	switch val := v.(type) {
+	case kongfig.RenderedValue:
+		return tomlValue(val.Value), true
+	case string:
+		return tomlString(val), true
+	case bool:
+		if val {
+			return "true", true
+		}
+		return "false", true
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%v", val), true
+	case float32:
+		return tomlFloat(float64(val), 32), true
+	case float64:
+		return tomlFloat(val, 64), true
+	case time.Time:
+		return val.Format(time.RFC3339Nano), true
+	}
+	return "", false
+}
+
 // tomlArray formats a slice as a TOML inline array: ["v1", "v2"].
 func tomlArray(vals []any) string {
 	parts := make([]string, len(vals))
@@ -448,7 +739,7 @@ func tomlInlineTable(m map[string]any) string {
 	sort.Strings(keys)
 	pairs := make([]string, len(keys))
 	for i, k := range keys {
-		pairs[i] = k + " = " + tomlValue(m[k])
+		pairs[i] = tomlKey(k) + " = " + tomlValue(m[k])
 	}
 	return "{" + strings.Join(pairs, ", ") + "}"
 }
@@ -459,18 +750,10 @@ func tomlValueStyled(s kongfig.Styler, v any) string {
 	if v == nil {
 		return s.Null("nil")
 	}
+	if out, ok := tomlLeafStyled(s, v); ok {
+		return out
+	}
 	switch val := v.(type) {
-	case string:
-		return s.String(fmt.Sprintf("%q", val))
-	case bool:
-		if val {
-			return s.Bool("true")
-		}
-		return s.Bool("false")
-	case int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64:
-		return s.Number(fmt.Sprintf("%v", val))
 	case kongfig.ConfigData:
 		return tomlInlineTableStyled(s, map[string]any(val))
 	case map[string]any:
@@ -512,6 +795,35 @@ func tomlValueStyledReflect(s kongfig.Styler, val any) string {
 	return s.String(fmt.Sprintf("%q", strings.TrimSpace(fmt.Sprintf("%v", val))))
 }
 
+// tomlLeafStyled is [tomlLeaf] with the Styler applied.
+// ok is false for containers, which the caller handles.
+func tomlLeafStyled(s kongfig.Styler, v any) (string, bool) {
+	switch val := v.(type) {
+	case kongfig.RenderedValue:
+		if cd, ok := val.Value.(kongfig.ConfigData); ok && !val.Redacted {
+			return tomlInlineTableStyled(s, map[string]any(cd)), true
+		}
+		return render.Value(s, val, tomlValue(val.Value)), true
+	case string:
+		return s.String(tomlString(val)), true
+	case bool:
+		if val {
+			return s.Bool("true"), true
+		}
+		return s.Bool("false"), true
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return s.Number(fmt.Sprintf("%v", val)), true
+	case float32:
+		return s.Number(tomlFloat(float64(val), 32)), true
+	case float64:
+		return s.Number(tomlFloat(val, 64)), true
+	case time.Time:
+		return s.String(val.Format(time.RFC3339Nano)), true
+	}
+	return "", false
+}
+
 // tomlArrayStyled formats a slice as a TOML inline array with styled values.
 func tomlArrayStyled(s kongfig.Styler, vals []any) string {
 	parts := make([]string, len(vals))
@@ -519,6 +831,70 @@ func tomlArrayStyled(s kongfig.Styler, vals []any) string {
 		parts[i] = tomlValueStyled(s, v)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// tomlInlineTableCtx formats a table as an inline table, honoring the key order
+// configured for path.
+func tomlInlineTableCtx(ctx context.Context, s kongfig.Styler, path string, sub kongfig.ConfigData) string {
+	keys := render.OrderedKeys(ctx, path, sub)
+	pairs := make([]string, len(keys))
+	for i, k := range keys {
+		pairs[i] = s.Key(tomlKey(k)) + " = " + tomlValueStyled(s, sub[k])
+	}
+	return "{" + strings.Join(pairs, ", ") + "}"
+}
+
+// tomlKey renders a table key, quoting it when it is not a valid TOML bare key.
+func tomlKey(k string) string {
+	if k == "" {
+		return `""`
+	}
+	for _, r := range k {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return tomlString(k)
+		}
+	}
+	return k
+}
+
+// tomlHeaderPath renders a dot-path as a TOML table header, quoting the segments
+// that are not valid bare keys.
+func tomlHeaderPath(path string) string {
+	segs := strings.Split(path, ".")
+	for i, seg := range segs {
+		segs[i] = tomlKey(seg)
+	}
+	return strings.Join(segs, ".")
+}
+
+// tomlString quotes s as a TOML basic string. Go's %q emits \xNN for control
+// bytes, which TOML does not accept; widen those to \u00NN.
+func tomlString(s string) string {
+	q := strconv.Quote(s)
+	if !strings.Contains(q, `\x`) {
+		return q
+	}
+	return strings.ReplaceAll(q, `\x`, `\u00`)
+}
+
+// tomlFloat formats a float as a TOML float, which — unlike Go — always needs a
+// fractional part or an exponent to stay distinct from an integer.
+func tomlFloat(f float64, bits int) string {
+	switch {
+	case math.IsNaN(f):
+		return "nan"
+	case math.IsInf(f, 1):
+		return "inf"
+	case math.IsInf(f, -1):
+		return "-inf"
+	}
+	out := strconv.FormatFloat(f, 'g', -1, bits)
+	if !strings.ContainsAny(out, ".eE") {
+		out += ".0"
+	}
+	return out
 }
 
 // tomlInlineTableStyled formats a map as a TOML inline table with s.Key() applied to keys.
@@ -530,7 +906,7 @@ func tomlInlineTableStyled(s kongfig.Styler, m map[string]any) string {
 	sort.Strings(keys)
 	pairs := make([]string, len(keys))
 	for i, k := range keys {
-		pairs[i] = s.Key(k) + " = " + tomlValueStyled(s, m[k])
+		pairs[i] = s.Key(tomlKey(k)) + " = " + tomlValueStyled(s, m[k])
 	}
 	return "{" + strings.Join(pairs, ", ") + "}"
 }

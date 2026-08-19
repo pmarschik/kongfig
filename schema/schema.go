@@ -38,14 +38,18 @@ var DefaultNameMapper casing.NameMapper = casing.KebabCase
 // the authoritative source; unknown options land in Extras unchanged.
 type FieldTag struct {
 	Redacted           *bool
-	ConfigPathPriority *int    // nil = no explicit priority; non-nil = priority value
-	Default            *string // nil = no default annotation; non-nil = value from default= tag option
-	Name               string
-	Codec              string // from codec=name tag option; empty if not set
-	Extras             []string
-	Skip               bool
-	Squash             bool
-	IsConfigPath       bool
+	ConfigPathPriority *int // nil = no explicit priority; non-nil = priority value
+	// Inline marks a table that may be written in a compact one-line form where
+	// the format supports it (TOML inline tables). nil = not marked; 0 = marked,
+	// use the renderer's default key limit; N = marked, at most N direct keys.
+	Inline       *int
+	Default      *string // nil = no default annotation; non-nil = value from default= tag option
+	Name         string
+	Codec        string // from codec=name tag option; empty if not set
+	Extras       []string
+	Skip         bool
+	Squash       bool
+	IsConfigPath bool
 }
 
 // ParseFieldTag parses a kongfig struct tag value.
@@ -95,6 +99,9 @@ func ParseFieldTag(tag, fieldName string) FieldTag {
 			ft.Redacted = &b
 		case "config-path":
 			ft.IsConfigPath = true
+		case "inline":
+			n := 0
+			ft.Inline = &n
 		default:
 			if !applyPrefixedTagOpt(opt, &ft) {
 				ft.Extras = append(ft.Extras, opt)
@@ -121,6 +128,14 @@ func applyPrefixedTagOpt(opt string, ft *FieldTag) bool {
 	}
 	if val, ok := strings.CutPrefix(opt, "codec="); ok {
 		ft.Codec = unquoteSingleQuotes(val)
+		return true
+	}
+	if val, ok := strings.CutPrefix(opt, "inline="); ok {
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 0 {
+			n = 0
+		}
+		ft.Inline = &n
 		return true
 	}
 	return false
@@ -477,6 +492,75 @@ func CodecPaths[T any]() []CodecPathEntry {
 		}
 	})
 	return out
+}
+
+// InlineTableEntry marks a config path whose table may be written in a compact
+// one-line form (a TOML inline table) instead of getting its own section.
+// Use [InlineTablePaths] to collect these entries from a config struct type.
+type InlineTableEntry struct {
+	// Path is a dot-path pattern; a "*" segment matches exactly one path segment.
+	Path string
+	// MaxKeys caps the direct keys an inlined table may hold.
+	// 0 means "use the renderer's default limit".
+	MaxKeys int
+}
+
+// InlineTablePaths collects the paths marked with the inline struct tag option.
+//
+// On a struct field the mark applies to that table itself. On a map field it
+// applies to the map's entries, so the returned path ends in a "*" segment:
+//
+//	type Config struct {
+//	    TLS     TLSConfig         `kongfig:"tls,inline"`       // -> "tls"
+//	    Buckets map[string]Bucket `kongfig:"buckets,inline=2"` // -> "buckets.*"
+//	}
+//
+// Renderers that cannot express inline tables ignore these entries.
+func InlineTablePaths[T any]() []InlineTableEntry {
+	var out []InlineTableEntry
+	walkInlineFields(reflect.TypeFor[T](), "", &out)
+	return out
+}
+
+func walkInlineFields(typ reflect.Type, prefix string, out *[]InlineTableEntry) {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct {
+		return
+	}
+	for field := range typ.Fields() {
+		if field.Anonymous {
+			walkInlineFields(field.Type, prefix, out)
+			continue
+		}
+		if !field.IsExported() {
+			continue
+		}
+		ft := ParseFieldTag(field.Tag.Get("kongfig"), field.Name)
+		if ft.Skip {
+			continue
+		}
+		path := ft.Name
+		if prefix != "" {
+			path = prefix + "." + ft.Name
+		}
+		subTyp := field.Type
+		for subTyp.Kind() == reflect.Pointer {
+			subTyp = subTyp.Elem()
+		}
+		if ft.Inline != nil {
+			marked := path
+			if subTyp.Kind() == reflect.Map {
+				// The mark applies to the entries, not to the map node itself.
+				marked = path + ".*"
+			}
+			*out = append(*out, InlineTableEntry{Path: marked, MaxKeys: *ft.Inline})
+		}
+		if subTyp.Kind() == reflect.Struct {
+			walkInlineFields(field.Type, path, out)
+		}
+	}
 }
 
 // isPrimitiveKind reports whether k is one of the scalar kinds that do not need

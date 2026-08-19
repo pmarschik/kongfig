@@ -221,6 +221,10 @@ func New(opts ...Option) *Kongfig {
 // order, so rendered output follows the Go struct layout instead of
 // alphabetical order.
 //
+// Fields tagged "inline" are published under [InlineTablesKey], letting formats
+// with a compact table syntax (TOML inline tables) emit them on one line when
+// they are short enough — both when rendering and when writing a config file.
+//
 // Additional options (e.g. [WithLogger], [WithRedactionFunc]) may be passed;
 // they are applied after the auto-derived redacted paths, so [WithRedacted]
 // can be used to extend or override the derived set.
@@ -242,6 +246,13 @@ func NewFor[T any](opts ...Option) *Kongfig {
 	cfgPaths := schema.ConfigPaths[T]()
 	if len(cfgPaths) > 0 {
 		opts = append([]Option{withConfigPaths(cfgPaths)}, opts...)
+	}
+	if inlines := schema.InlineTablePaths[T](); len(inlines) > 0 {
+		entries := make(map[string]int, len(inlines))
+		for _, e := range inlines {
+			entries[e.Path] = e.MaxKeys
+		}
+		opts = append([]Option{WithPathMeta(InlineTablesKey, entries)}, opts...)
 	}
 	fieldOrder := schema.FieldOrderPaths[T]()
 	if len(fieldOrder) > 0 {

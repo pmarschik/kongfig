@@ -95,6 +95,16 @@ var SplitSepKey = NewPathMetaKey[string]()
 // The env renderer uses this to rejoin map[string]string values into a single env var string.
 var MapSplitSpecKey = NewPathMetaKey[MapSplitSpec]()
 
+// InlineTablesKey is the [PathMetaKey] for paths whose tables may be written in
+// a compact one-line form where the format supports it (TOML inline tables).
+// Each key is a dot-path pattern in which a "*" segment matches exactly one path
+// segment; the value caps the direct keys the table may hold, with 0 meaning
+// "use the renderer's default limit".
+//
+// Populated automatically by [NewFor] from the inline struct tag option (see
+// [schema.InlineTablePaths]). Renderers that cannot express inline tables ignore it.
+var InlineTablesKey = NewPathMetaKey[int]()
+
 // codecPathsKey is the private [PathMetaKey] for path → anyCodec maps stored in pathMeta.
 // Set by withCodecPathResolution (called from NewFor[T]); consumed at load time
 // (commitLayer) and render time (wrapRenderData).

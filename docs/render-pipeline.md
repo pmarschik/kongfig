@@ -158,6 +158,57 @@ type OutputProvider interface {
 
 When a parser implements it, `Bind` is called to produce a styled renderer. When it does not, `kongfig.Bind` falls back to a `passthroughRenderer` that marshals via `parser.Marshal` and writes plain bytes without styling. This keeps generic providers (structs, in-memory fixtures) free of rendering obligations while still allowing callers to render any `map[string]any` in any supported format regardless of how it was loaded.
 
+## TOML layout
+
+The TOML parser renders and writes through the same emitter, so `parsers/toml` layout
+options apply to both `Render` and `Marshal`. Construct a configured parser with
+`toml.New(opts...)`; `toml.Default` keeps the defaults.
+
+### Indentation
+
+Nested table headers and the keys they own are indented by depth (BurntSushi style):
+
+```toml
+[server]
+port = 8080
+[server.tls]
+enabled = true
+```
+
+`toml.WithIndent(s)` sets the per-level string. The default is two spaces; `WithIndent("")`
+disables indentation and keeps every line flush left.
+
+### Inline tables
+
+A table whose path is marked as inlinable is emitted as a TOML inline table instead of its
+own section:
+
+```toml
+[buckets]
+work = { color = "blue", path = "/w" }
+```
+
+Paths are marked either on the parser (`toml.WithInlineTables("buckets.*")`, where a `*`
+segment matches exactly one path segment) or from the config struct via the
+`kongfig:",inline"` tag — see [struct-tags.md](struct-tags.md#inline-option). Tag-derived
+paths reach the parser through the `kongfig.InlineTablesKey` path meta, which `NewFor[T]`
+populates; `Parser.MarshalCtx` accepts the same context so writes honour them too.
+
+An inlinable table is only inlined if it passes the gates:
+
+| Gate                     | Render | Marshal |
+| ------------------------ | ------ | ------- |
+| direct key count ≤ limit | yes    | yes     |
+| fits the terminal width  | yes    | no      |
+
+The key limit is `toml.DefaultInlineMaxKeys` (3), overridable globally with
+`toml.WithInlineMaxKeys(n)` or per path with `inline=N` in the struct tag (the per-path
+value wins when set). Only direct keys count toward the limit — a nested table inside a
+candidate is emitted as a nested inline table.
+
+Terminal width is deliberately checked on the render path only: a file written to disk must
+not depend on the width of the terminal that happened to produce it.
+
 ## Bind: parser → renderer
 
 `kongfig.Bind(parser, styler)` wires a `Parser` to a `Styler`:

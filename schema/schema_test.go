@@ -519,3 +519,73 @@ func TestHelpTextPaths_NestedStruct(t *testing.T) {
 		t.Errorf("db.host help = %q, want 'database hostname'", got["db.host"])
 	}
 }
+
+func TestParseFieldTag_Inline(t *testing.T) {
+	zero, five := 0, 5
+	tests := []struct {
+		want *int
+		name string
+		tag  string
+	}{
+		{name: "absent", tag: "buckets", want: nil},
+		{name: "bare uses renderer default", tag: "buckets,inline", want: &zero},
+		{name: "explicit count", tag: "buckets,inline=5", want: &five},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := schema.ParseFieldTag(tc.tag, "Buckets").Inline
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("Inline = %d, want nil", *got)
+			case tc.want != nil && got == nil:
+				t.Errorf("Inline = nil, want %d", *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Errorf("Inline = %d, want %d", *got, *tc.want)
+			}
+		})
+	}
+}
+
+//go:fix inline
+
+func TestInlineTablePaths_MapFieldMarksEntries(t *testing.T) {
+	type bucket struct {
+		Path string `kongfig:"path"`
+	}
+	type cfg struct {
+		Buckets map[string]bucket `kongfig:"buckets,inline=2"`
+	}
+
+	got := schema.InlineTablePaths[cfg]()
+
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1; got %+v", len(got), got)
+	}
+	if got[0].Path != "buckets.*" {
+		t.Errorf("Path = %q, want buckets.*", got[0].Path)
+	}
+	if got[0].MaxKeys != 2 {
+		t.Errorf("MaxKeys = %d, want 2", got[0].MaxKeys)
+	}
+}
+
+func TestInlineTablePaths_StructFieldMarksItself(t *testing.T) {
+	type tls struct {
+		Enabled bool `kongfig:"enabled"`
+	}
+	type cfg struct {
+		TLS tls `kongfig:"tls,inline"`
+	}
+
+	got := schema.InlineTablePaths[cfg]()
+
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1; got %+v", len(got), got)
+	}
+	if got[0].Path != "tls" {
+		t.Errorf("Path = %q, want tls", got[0].Path)
+	}
+	if got[0].MaxKeys != 0 {
+		t.Errorf("MaxKeys = %d, want 0 (renderer default)", got[0].MaxKeys)
+	}
+}

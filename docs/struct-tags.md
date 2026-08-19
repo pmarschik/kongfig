@@ -10,13 +10,15 @@ The `kongfig:""` struct tag controls how `structs.Defaults`, `structs.TagEnv`, `
 kongfig:"name[,option[,option...]]"
 ```
 
-| Tag value                         | Meaning                                                    |
-| --------------------------------- | ---------------------------------------------------------- |
-| `kongfig:""`                      | Use lowercased field name as the key                       |
-| `kongfig:"my-key"`                | Use `"my-key"` as the key                                  |
-| `kongfig:"-"`                     | Skip this field entirely                                   |
-| `kongfig:"my-key,redacted"`       | Key `"my-key"`, value hidden in output                     |
-| `kongfig:"my-key,redacted=false"` | Key `"my-key"`, explicitly not redacted (overrides parent) |
+| Tag value                         | Meaning                                                           |
+| --------------------------------- | ----------------------------------------------------------------- |
+| `kongfig:""`                      | Use lowercased field name as the key                              |
+| `kongfig:"my-key"`                | Use `"my-key"` as the key                                         |
+| `kongfig:"-"`                     | Skip this field entirely                                          |
+| `kongfig:"my-key,redacted"`       | Key `"my-key"`, value hidden in output                            |
+| `kongfig:"my-key,redacted=false"` | Key `"my-key"`, explicitly not redacted (overrides parent)        |
+| `kongfig:"my-key,inline"`         | Key `"my-key"`, table written on one line where the format allows |
+| `kongfig:"my-key,inline=5"`       | As above, but up to 5 keys instead of the renderer default        |
 
 The name part is parsed by `parseTag(tag, fieldName)`: empty name falls back to `strings.ToLower(fieldName)`.
 
@@ -148,6 +150,59 @@ kongfig.RedactedPaths[Config]()
 ```
 
 The path set is populated at startup from the config struct type, not at runtime. Adding a field with `redacted` and calling `New()` again picks it up.
+
+---
+
+## inline option
+
+`kongfig:"name,inline"` marks a table as a candidate for a compact one-line form where
+the output format supports it. Today only the TOML parser acts on it, emitting a TOML
+inline table (`work = {path = "/w", color = "blue"}`) instead of a `[buckets.work]`
+section.
+
+What gets marked depends on the field's type:
+
+```go
+type Bucket struct {
+    Path  string `kongfig:"path"`
+    Color string `kongfig:"color"`
+}
+
+type Config struct {
+    Buckets map[string]Bucket `kongfig:"buckets,inline"`   // marks "buckets.*" — each entry
+    TLS     TLSConfig         `kongfig:"tls,inline=5"`     // marks "tls" — the table itself
+}
+```
+
+- A **map** field marks its entries, not the map: the registered path is `"buckets.*"`,
+  where `*` matches exactly one path segment.
+- A **struct** field marks its own path (`"tls"`).
+
+`inline=N` caps the number of direct keys the table may hold; a table with more keys falls
+back to a regular section. Plain `inline` (no `=N`) defers to the renderer's default,
+`toml.DefaultInlineMaxKeys` (3).
+
+`schema.InlineTablePaths[T]()` returns the marked paths as `[]schema.InlineTableEntry`
+(`{Path, MaxKeys}`). `NewFor[T]` calls it automatically and publishes the result under
+[`kongfig.InlineTablesKey`], so both rendering and writing a config file pick it up with
+no extra wiring:
+
+```go
+kf := kongfig.NewFor[Config]()          // "buckets.*" → 0, "tls" → 5
+kf.RenderWith(ctx, w, tomlParser.Bind(styler))
+```
+
+Paths can also be marked directly on the parser, without struct tags:
+
+```go
+p := toml.New(
+    toml.WithInlineTables("buckets.*"),
+    toml.WithInlineMaxKeys(4),
+)
+```
+
+See [render-pipeline.md](render-pipeline.md#toml-layout) for how the key limit interacts
+with terminal width.
 
 ---
 

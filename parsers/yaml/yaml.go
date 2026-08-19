@@ -232,6 +232,10 @@ func resolveYAMLLeafFormat(rv kongfig.RenderedValue, isRV bool, rawVal any, k, p
 		return "", false
 	}
 	switch {
+	case rawVal == nil:
+		// YAML has a null literal; Go's "<nil>" is not it. Spelling it the way
+		// Marshal does keeps rendered output pasteable back into a config file.
+		return "null", false
 	case isYAMLCollection(rawVal):
 		inline := yamlFlowValue(rawVal)
 		keyW := render.VisualWidth(s.Key(k))

@@ -25,6 +25,7 @@ var (
 	_ kongfig.OutputProvider = Parser{}
 	_ kongfig.KeyOrderParser = Parser{}
 	_ kongfig.DocumentParser = Parser{}
+	_ kongfig.CtxMarshaler   = Parser{}
 )
 
 // Unmarshal decodes YAML bytes into a map.
@@ -108,14 +109,82 @@ func collectYAMLDocumentMeta(node *goyaml.Node, prefix string, meta kongfig.Docu
 
 // Marshal encodes a map to indented YAML bytes.
 // The returned bytes always end with a trailing newline (added by the YAML encoder).
-func (Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
+//
+// Keys are ordered by the YAML encoder, which sorts them. Use [Parser.MarshalCtx]
+// with a key order in the context to write a document in its own order instead.
+func (p Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
+	return p.MarshalCtx(context.Background(), data)
+}
+
+// MarshalCtx is [Parser.Marshal] with a context — the [kongfig.CtxMarshaler]
+// implementation — so a key order carried under [kongfig.RenderKeyOrderKey] is
+// written out as-is, which is what lets a config file be rewritten in the order it
+// was parsed rather than alphabetized. Keys the order does not name follow it
+// alphabetically. A sortby= mark or a [kongfig.KeySortFunc] in the context orders
+// keys too, and is honored the same way. Without anything in the context that
+// orders keys the output is byte-for-byte [Parser.Marshal]'s. See
+// [kongfig.WithRenderKeyOrderCtx] and [kongfig.WithRenderKeySortCtx] for building
+// such a context.
+func (Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := goyaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(data); err != nil {
+
+	// With no order to honor, hand the map to the encoder as before: its own key
+	// sorting is not plain alphabetical, so an ordered walk would quietly change
+	// the output of every existing caller.
+	var value any = data
+	if render.HasKeyOrder(ctx) {
+		node, err := orderedNode(ctx, "", data)
+		if err != nil {
+			return nil, err
+		}
+		value = node
+	}
+	if err := enc.Encode(value); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// orderedNode builds the mapping node for data with its keys in the order ctx
+// gives for path. Leaves are encoded by go-yaml itself, so scalar styling and
+// quoting stay exactly what Marshal would have produced.
+func orderedNode(ctx context.Context, path string, data kongfig.ConfigData) (*goyaml.Node, error) {
+	node := &goyaml.Node{Kind: goyaml.MappingNode, Tag: "!!map"}
+	for _, k := range render.OrderedKeys(ctx, path, data) {
+		keyNode := &goyaml.Node{}
+		if err := keyNode.Encode(k); err != nil {
+			return nil, err
+		}
+		child := k
+		if path != "" {
+			child = path + "." + k
+		}
+		valNode, err := orderedValueNode(ctx, child, data[k])
+		if err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, keyNode, valNode)
+	}
+	return node, nil
+}
+
+// orderedValueNode encodes one value, recursing into nested maps so their keys
+// are ordered too. Sequences are left to the encoder: an order is keyed by path,
+// and array elements have no path of their own.
+func orderedValueNode(ctx context.Context, path string, v any) (*goyaml.Node, error) {
+	switch sub := v.(type) {
+	case kongfig.ConfigData:
+		return orderedNode(ctx, path, sub)
+	case map[string]any:
+		return orderedNode(ctx, path, sub)
+	}
+	node := &goyaml.Node{}
+	if err := node.Encode(v); err != nil {
+		return nil, err
+	}
+	return node, nil
 }
 
 // Format returns the parser's format name for source label composition.
@@ -170,6 +239,12 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		path := k
 		if prefix != "" {
 			path = prefix + "." + k
+		}
+
+		// A mapping is not dropped on its own emptiness here: the recursion below
+		// writes nothing for one whose keys all went, and the header follows.
+		if render.OmitEmpty(ctx, path, v) {
+			continue
 		}
 
 		if sub, ok := v.(kongfig.ConfigData); ok {

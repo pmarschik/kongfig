@@ -249,6 +249,16 @@ func WithRenderHelpTextsCtx(ctx context.Context, texts map[string]string) contex
 	return RenderHelpTextsSeenKey.WithCtx(ctx, &seen)
 }
 
+// WithRenderKeyOrderCtx returns a context carrying a parent-path →
+// ordered-child-names map, for callers that marshal or render outside
+// [Kongfig.RenderWith] — a [CtxMarshaler] writing a config file, or a direct call
+// to a renderer in a test. In production render paths, prefer
+// [WithRenderKeyOrder]; [Kongfig.Render] binds the loaded layers' merged order on
+// its own, see [Kongfig.KeyOrder].
+func WithRenderKeyOrderCtx(ctx context.Context, order map[string][]string) context.Context {
+	return RenderKeyOrderKey.WithCtx(ctx, order)
+}
+
 // RenderFilterSourceFromCtx returns the effective filter source list by merging
 // the value stored in ctx with any additional opts. The opts override the ctx value.
 // This is used by show.renderPerLayer to read the filter before data wrapping.

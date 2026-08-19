@@ -207,10 +207,20 @@ type passthroughRenderer struct {
 	p Parser
 }
 
-func (r *passthroughRenderer) Render(_ context.Context, w io.Writer, data ConfigData) error {
+func (r *passthroughRenderer) Render(ctx context.Context, w io.Writer, data ConfigData) error {
 	// Unwrap RenderedValues before marshaling — the Parser doesn't know about them.
 	unwrapped := unwrapRenderedValues(data)
-	b, err := r.p.Marshal(unwrapped)
+	// A parser that can read the render options gets them: without this the key
+	// order the layers reported would be lost on every passthrough render.
+	var (
+		b   []byte
+		err error
+	)
+	if cm, ok := r.p.(CtxMarshaler); ok {
+		b, err = cm.MarshalCtx(ctx, unwrapped)
+	} else {
+		b, err = r.p.Marshal(unwrapped)
+	}
 	if err != nil {
 		return err
 	}

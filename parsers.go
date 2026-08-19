@@ -1,5 +1,7 @@
 package kongfig
 
+import "context"
+
 // Parser encodes and decodes configuration between raw bytes and a map.
 type Parser interface {
 	Unmarshal([]byte) (ConfigData, error)
@@ -14,6 +16,22 @@ type ParserNamer interface {
 	Format() string
 	// Extensions returns the file extensions this parser handles: [".yaml", ".yml"].
 	Extensions() []string
+}
+
+// CtxMarshaler is an optional interface a [Parser] can implement to marshal
+// with the render context in hand. Where [Parser.Marshal] sees only the data,
+// MarshalCtx also sees the render options the call established — the key order
+// under [RenderKeyOrderKey] above all, so written output can follow the order
+// the document was parsed in instead of falling back to alphabetical, and the
+// sort hooks that order a map's entries by a value inside them ([KeySortByKey],
+// [RenderKeySortKey]).
+//
+// [Bind] prefers it: a parser that is not an [OutputProvider] is wrapped in a
+// renderer that calls MarshalCtx when available and [Parser.Marshal] otherwise.
+// Implementations must stay usable without any options in the context, since
+// Marshal is still the entry point for plain writes.
+type CtxMarshaler interface {
+	MarshalCtx(ctx context.Context, data ConfigData) ([]byte, error)
 }
 
 // OutputProvider is implemented by providers and parsers that can render

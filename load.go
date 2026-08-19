@@ -535,3 +535,11 @@ func (k *Kongfig) DeriveLoad(ctx context.Context, fn DeriveLoadFn, opts ...LoadO
 	}
 	return nil
 }
+
+// WithLayerKeyOrder attaches a parent-path → ordered-child-names map to the layer
+// being loaded, as [KeyOrderParser] reports it. Providers built on
+// [providers/file.Provider] carry their order automatically; use this when calling
+// [Kongfig.LoadParsed] with data you parsed yourself.
+func WithLayerKeyOrder(ko map[string][]string) LoadOption {
+	return func(c *loadOptions) { c.keyOrder = ko }
+}

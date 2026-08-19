@@ -61,3 +61,44 @@ func (k *Kongfig) Cut(path string) *Kongfig {
 	}
 	return child
 }
+
+// KeyOrder returns the document key order the loaded layers reported, merged into
+// one parent-path → ordered-child-names map. Returns nil when no layer reported an
+// order.
+//
+// Layers are merged in pipeline order and the first layer to mention a key at a
+// parent path fixes where it reads; a later layer that re-states the key does not
+// move it, and keys only a later layer introduces follow the ones that do. Renderers
+// consume this through [RenderDerivedKeyOrderKey], which [Kongfig.Render] binds
+// for the merged view — see [WithRenderKeyOrder] to override it, and
+// [WithRenderKeySort] to reorder what it produced.
+func (k *Kongfig) KeyOrder() map[string][]string {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.keyOrderLocked()
+}
+
+// keyOrderLocked merges the pipeline's per-layer key orders. The caller holds
+// k.mu.
+func (k *Kongfig) keyOrderLocked() map[string][]string {
+	merged := make(map[string][]string)
+	seen := make(map[string]map[string]bool)
+	for i := range k.pipeline {
+		for parent, keys := range k.pipeline[i].layer.KeyOrder {
+			if seen[parent] == nil {
+				seen[parent] = make(map[string]bool, len(keys))
+			}
+			for _, key := range keys {
+				if seen[parent][key] {
+					continue
+				}
+				seen[parent][key] = true
+				merged[parent] = append(merged[parent], key)
+			}
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}

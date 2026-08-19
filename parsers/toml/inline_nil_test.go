@@ -1,6 +1,8 @@
 package toml_test
 
 import (
+	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -94,5 +96,58 @@ func TestMarshal_InlineTableArrayOmitsNilValues(t *testing.T) {
 	}
 	if _, err := tomlparser.Default.Unmarshal(b); err != nil {
 		t.Fatalf("written TOML does not parse back: %v\n%s", err, b)
+	}
+}
+
+// Render has the same constraint as Marshal: TOML has no null, so a nil key
+// cannot be shown at all — "k = nil" is not TOML, and inside an inline table the
+// reader cannot even delete the line by hand.
+func TestRender_OmitsNilValues(t *testing.T) {
+	p := tomlparser.New(tomlparser.WithInlineTables("fields.*"))
+	data := kongfig.ConfigData{
+		"top": nil,
+		"fields": kongfig.ConfigData{
+			"summary": kongfig.ConfigData{"jira": "summary", "link": nil},
+		},
+		"block": kongfig.ConfigData{"kept": "y", "gone": nil},
+	}
+
+	var buf bytes.Buffer
+	if err := p.Bind(plainStyler{}).Render(context.Background(), &buf, data); err != nil {
+		t.Fatal("render:", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "nil") {
+		t.Errorf("render wrote a nil value:\n%s", out)
+	}
+	if _, err := p.Unmarshal(buf.Bytes()); err != nil {
+		t.Fatalf("rendered output does not parse: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `jira = "summary"`) || !strings.Contains(out, `kept = "y"`) {
+		t.Errorf("non-nil siblings were dropped too:\n%s", out)
+	}
+}
+
+// A redacted placeholder hides a value; it is not the absence of one, so it
+// survives the nil-dropping in both forms.
+func TestRender_RedactedPlaceholderSurvivesNilOmission(t *testing.T) {
+	p := tomlparser.New(tomlparser.WithInlineTables("creds.*"))
+	data := kongfig.ConfigData{
+		"token": kongfig.RenderedValue{Redacted: true, RedactedDisplay: "***"},
+		"creds": kongfig.ConfigData{
+			"api": kongfig.ConfigData{
+				"key":  kongfig.RenderedValue{Redacted: true, RedactedDisplay: "***"},
+				"user": "admin",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := p.Bind(plainStyler{}).Render(context.Background(), &buf, data); err != nil {
+		t.Fatal("render:", err)
+	}
+	if got := strings.Count(buf.String(), "***"); got != 2 {
+		t.Errorf("redacted placeholders = %d, want 2:\n%s", got, buf.String())
 	}
 }

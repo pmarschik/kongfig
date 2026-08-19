@@ -20,12 +20,15 @@ import (
 // Parser implements [kongfig.Parser] for TOML.
 //
 // The zero value is ready to use and indents nested tables by two spaces.
-// Use [New] with [WithIndent], [WithInlineTables] and [WithInlineMaxKeys] to
-// configure layout; the settings apply to both [Parser.Marshal] and rendering.
+// Use [New] with [WithIndent], [WithInlineTables], [WithInlineMaxKeys] and
+// [WithInlineOverflow] to configure layout; the settings apply to both
+// [Parser.Marshal] and rendering.
 type Parser struct {
-	indent         *string
-	inlineMaxKeys  *int
-	inlinePatterns []string
+	indent           *string
+	inlineMaxKeys    *int
+	inlineWrap       *bool
+	inlinePatterns   []string
+	overflowPatterns []string
 }
 
 // defaultIndent is the per-level indentation applied to nested tables when the
@@ -52,7 +55,17 @@ func (p Parser) inlinePolicyFor(checkWidth bool) inlinePolicy {
 	if p.inlineMaxKeys != nil {
 		limit = *p.inlineMaxKeys
 	}
-	return inlinePolicy{patterns: p.inlinePatterns, defaultMax: limit, checkWidth: checkWidth}
+	wrap := true
+	if p.inlineWrap != nil {
+		wrap = *p.inlineWrap
+	}
+	return inlinePolicy{
+		patterns:         p.inlinePatterns,
+		overflowPatterns: p.overflowPatterns,
+		defaultMax:       limit,
+		checkWidth:       checkWidth,
+		wrap:             wrap,
+	}
 }
 
 // Default is a ready-to-use Parser instance.
@@ -62,6 +75,8 @@ var (
 	_ kongfig.Parser         = Parser{}
 	_ kongfig.ParserNamer    = Parser{}
 	_ kongfig.OutputProvider = Parser{}
+	_ kongfig.KeyOrderParser = Parser{}
+	_ kongfig.CtxMarshaler   = Parser{}
 )
 
 // Unmarshal decodes TOML bytes into a map.
@@ -119,10 +134,16 @@ func (p Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
 	return p.MarshalCtx(context.Background(), data)
 }
 
-// MarshalCtx is [Parser.Marshal] with a context, so inline-table marks derived
-// from ,inline struct tags ([kongfig.InlineTablesKey], injected by
-// [kongfig.NewFor]) also apply when writing a config file. Terminal width is
-// ignored either way.
+// MarshalCtx is [Parser.Marshal] with a context — the [kongfig.CtxMarshaler]
+// implementation — so the render options in ctx also apply when writing a config
+// file: inline-table marks derived from ,inline struct tags
+// ([kongfig.InlineTablesKey], injected by [kongfig.NewFor]) and the key order
+// under [kongfig.RenderKeyOrderKey], which lets a rewritten file keep the order
+// it was parsed in instead of coming back alphabetized, plus the sort hooks that
+// order keys by a value inside them ([kongfig.KeySortByKey],
+// [kongfig.RenderKeySortKey]). Terminal width is ignored either way. See
+// [kongfig.WithRenderKeyOrderCtx] and [kongfig.WithRenderKeySortCtx] for building
+// such a context.
 func (p Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte, error) {
 	opts := tomlRenderOpts{
 		indent:       p.effectiveIndent(),
@@ -131,6 +152,9 @@ func (p Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte
 		omitComments: true,
 	}
 	opts.inline.ctxPaths = kongfig.InlineTablesKey.GetAll(ctx)
+	// Width is ignored when writing a file, but an overflow mark implies an inline
+	// one, so a field tagged only ,overflow still inlines here.
+	opts.inline.overflowCtx = kongfig.InlineOverflowKey.GetAll(ctx)
 	var buf bytes.Buffer
 	if err := renderMap(ctx, &buf, identityStyler{}, kongfig.ToConfigData(data), "", "", 0, opts); err != nil {
 		return nil, err
@@ -209,25 +233,62 @@ type inlinePolicy struct {
 	// [kongfig.InlineTablesKey], i.e. those derived from ,inline struct tags.
 	// A value of 0 defers to defaultMax.
 	ctxPaths map[string]int
+	// overflowCtx are the marks carried in the render context by
+	// [kongfig.InlineOverflowKey], i.e. those derived from ,overflow struct tags.
+	overflowCtx map[string]bool
 	// patterns are the marks configured on the parser via [WithInlineTables].
-	patterns   []string
-	defaultMax int
-	checkWidth bool
+	patterns []string
+	// overflowPatterns are the marks configured via [WithInlineOverflow]. Like the
+	// struct tag, an overflow mark implies an inline one.
+	overflowPatterns []string
+	defaultMax       int
+	checkWidth       bool
+	// wrap allows a table too wide for its line to be reflowed across lines
+	// instead of falling back to a section header. See [WithInlineWrap].
+	wrap bool
 }
 
-func (ip inlinePolicy) empty() bool { return len(ip.patterns) == 0 && len(ip.ctxPaths) == 0 }
+func (ip inlinePolicy) empty() bool {
+	return len(ip.patterns) == 0 && len(ip.ctxPaths) == 0 &&
+		len(ip.overflowPatterns) == 0 && len(ip.overflowCtx) == 0
+}
+
+// overflows reports whether path keeps its compact one-line form even when that
+// line does not fit the terminal. Patterns are matched the same way
+// [inlinePolicy.maxKeysFor] matches them.
+func (ip inlinePolicy) overflows(path string) bool {
+	if path == "" {
+		return false
+	}
+	segs := strings.Split(path, ".")
+	for _, pat := range ip.overflowPatterns {
+		if matchPathPattern(strings.Split(pat, "."), segs) {
+			return true
+		}
+	}
+	for pat, on := range ip.overflowCtx {
+		if on && matchPathPattern(strings.Split(pat, "."), segs) {
+			return true
+		}
+	}
+	return false
+}
 
 // maxKeysFor reports whether path is marked for inlining and, if so, how many
 // direct keys the table may hold. Patterns are matched segment by segment; a "*"
 // segment matches any single segment. When several context marks match, the
 // largest explicit limit wins, so the result does not depend on map order.
+//
+// An overflow mark counts as an inline mark without a limit of its own: asking
+// for the compact form past the edge of the window is asking for the compact
+// form.
 func (ip inlinePolicy) maxKeysFor(path string) (int, bool) {
 	if path == "" {
 		return 0, false
 	}
 	segs := strings.Split(path, ".")
 
-	marked := false
+	marked := ip.overflows(path)
 	for _, pat := range ip.patterns {
 		if matchPathPattern(strings.Split(pat, "."), segs) {
 			marked = true
@@ -273,8 +334,13 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 		forceBlock: render.BlockCollections(ctx),
 		indent:     r.p.effectiveIndent(),
 		inline:     r.p.inlinePolicyFor(true),
+		// TOML has no null. Showing "k = nil" would be output the user cannot
+		// paste back into a config file, so nil keys are left out of rendered
+		// documents exactly as they are left out of written ones.
+		omitNil: true,
 	}
 	opts.inline.ctxPaths = kongfig.InlineTablesKey.GetAll(ctx)
+	opts.inline.overflowCtx = kongfig.InlineOverflowKey.GetAll(ctx)
 	if !render.AlignSources(ctx) {
 		return renderMap(ctx, w, r.s, data, "", "", 0, opts)
 	}
@@ -292,21 +358,28 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 // indented depth-1 levels and the keys it owns depth levels, matching the layout the
 // TOML encoder produces for nested tables.
 func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.ConfigData, prefix, tableHeader string, depth int, opts tomlRenderOpts) error {
-	keys := render.OrderedKeys(ctx, prefix, data)
+	keys := dropEmptyKeys(ctx, prefix, data, render.OrderedKeys(ctx, prefix, data))
 
 	// Scalars first, then tables, then table-arrays (TOML convention: scalars must precede section headers)
 	scalars, tables, tableArrs := classifyTOMLKeys(data, keys)
-	// Inlined tables and short arrays of tables are key/value lines, so they must
-	// join the scalars ahead of any header — anything after a header would belong
-	// to that section instead.
+	// Inlined tables and inlined arrays of tables are key/value lines, so they
+	// must join the scalars ahead of any header — anything after a header would
+	// belong to that section instead.
 	inlines, tables := splitInlineTables(ctx, s, data, tables, prefix, depth, opts)
-	inlineArrs, tableArrs := splitTableArrays(data, tableArrs, depth, opts)
+	inlineArrs, tableArrs := splitTableArrays(data, tableArrs, prefix, depth, opts)
 
 	// Every table level owns a header. Top-level tables are preceded by a blank
 	// line; nested ones sit directly under their parent.
 	if tableHeader != "" {
 		if depth <= 1 {
 			fmt.Fprintln(w)
+		}
+		// A table's own help text belongs above its header. Reading it here also
+		// spends it, so the prefix match in [render.HelpText] cannot hand it to
+		// whichever key happens to be rendered first inside the table, where it
+		// would read as documentation of that key.
+		if help := opts.help(ctx, tableHeader); help != "" {
+			fmt.Fprintf(w, "%s%s\n", opts.ind(depth-1), s.Comment("# "+help))
 		}
 		fmt.Fprintf(w, "%s%s\n", opts.ind(depth-1), s.Syntax("[")+s.Key(tomlHeaderPath(tableHeader))+s.Syntax("]"))
 	}
@@ -381,7 +454,9 @@ func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k stri
 		leafVal = v
 	}
 
-	if leafVal == nil && opts.omitNil {
+	// A redacted value carries its placeholder rather than its value, so it is
+	// written even though the value it hides is nil.
+	if leafVal == nil && opts.omitNil && (!isRV || !rv.Redacted) {
 		return nil
 	}
 
@@ -395,17 +470,16 @@ func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k stri
 	keyW := render.VisualWidth(styledKey) + len(pad)
 
 	if isTOMLArray(leafVal) && (opts.forceBlock || (opts.cols > 0 && keyW+3+render.VisualWidth(inline) > opts.cols)) {
-		if isRV && !opts.omitComments {
-			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-				fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+ann)
-			}
+		renderTOMLArrayBlock(ctx, w, s, styledKey, leafVal, rv, isRV, path, pad, opts)
+		return nil
+	}
+
+	if folded, ok := foldTOMLString(leafVal, isRV && rv.Redacted, pad+"  ", keyW+3, opts); ok {
+		line := pad + styledKey + " = " + render.Value(s, v, folded)
+		if isRV {
+			line += tomlAnnSuffix(ctx, rv, path, s, opts)
 		}
-		fmt.Fprintf(w, "%s%s = [\n", pad, styledKey)
-		elemPad := pad + "  "
-		for _, elem := range toTOMLSlice(leafVal) {
-			fmt.Fprintf(w, "%s%s,\n", elemPad, tomlValueStyled(s, elem))
-		}
-		fmt.Fprintf(w, "%s]\n", pad)
+		fmt.Fprintln(w, line)
 		return nil
 	}
 
@@ -417,14 +491,142 @@ func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k stri
 	return nil
 }
 
+// foldTOMLString breaks a string too wide for the terminal across lines as a TOML
+// multi-line basic string. Every line but the last ends with a backslash, which
+// trims the newline and the indentation of the line below it, so the folded form
+// holds exactly the value the single line held. It beats letting the terminal wrap
+// the line, which breaks mid-token and at column zero.
+//
+// It reports false when there is nothing to gain: no terminal to fit (a written
+// config file must not depend on the one that produced it), a value that is not a
+// string, a redacted placeholder standing in for one, or a value with no space to
+// break at — a fold mid-token would be a fold the reader cannot see.
+//
+// startCol is the column the value starts at and contIndent the indentation the
+// lines below it carry, so the same fold serves a key/value line and an element of
+// an expanded array.
+func foldTOMLString(leafVal any, redacted bool, contIndent string, startCol int, opts tomlRenderOpts) (string, bool) {
+	str, isStr := leafVal.(string)
+	if !isStr || redacted || opts.cols <= 0 {
+		return "", false
+	}
+	quoted := tomlString(str)
+	if startCol+render.VisualWidth(quoted) <= opts.cols {
+		return "", false
+	}
+
+	// The escaped body carries no bare `"""` and no raw newline, so it is as safe
+	// between triple quotes as it was between single ones.
+	body := strings.TrimSuffix(strings.TrimPrefix(quoted, `"`), `"`)
+	// Three columns are held back on every line: what the last one spends on the
+	// closing delimiter, and two to spare on the others past their backslash.
+	lines := packFoldChunks(foldChunks(body), opts.cols-startCol-3, opts.cols-len(contIndent)-3)
+	if len(lines) < 2 {
+		return "", false
+	}
+	return `"""` + strings.Join(lines, "\\\n"+contIndent) + `"""`, true
+}
+
+// foldChunks splits an escaped string body after each run of spaces, so that the
+// chunks joined back together are the body again. The spaces stay on the line they
+// end: a line-ending backslash trims only what comes after it.
+func foldChunks(body string) []string {
+	var chunks []string
+	start := 0
+	for i := 0; i < len(body); i++ {
+		if body[i] != ' ' {
+			continue
+		}
+		for i+1 < len(body) && body[i+1] == ' ' {
+			i++
+		}
+		chunks = append(chunks, body[start:i+1])
+		start = i + 1
+	}
+	if start < len(body) {
+		chunks = append(chunks, body[start:])
+	}
+	return chunks
+}
+
+// packFoldChunks fills lines with chunks, greedily, within the width the first
+// line has and the width every line below it has. A chunk wider than a line of its
+// own still gets one: the alternative is a break inside a token.
+func packFoldChunks(chunks []string, firstWidth, contWidth int) []string {
+	var lines []string
+	cur, width := "", firstWidth
+	for _, chunk := range chunks {
+		if cur != "" && render.VisualWidth(cur+chunk) > width {
+			lines = append(lines, cur)
+			cur, width = chunk, contWidth
+			continue
+		}
+		cur += chunk
+	}
+	return append(lines, cur)
+}
+
+// renderTOMLArrayBlock writes an array one element per line, for arrays too wide
+// for the terminal or when collections are forced into block form. The key stays
+// a key/value line, so it keeps its place ahead of any section header.
+func renderTOMLArrayBlock(ctx context.Context, w io.Writer, s kongfig.Styler, styledKey string, leafVal any, rv kongfig.RenderedValue, isRV bool, path, pad string, opts tomlRenderOpts) {
+	// The annotation belongs to the key, so it rides on the opening bracket. A
+	// line of its own above the key would read as a comment on the whole block.
+	ann := ""
+	if isRV {
+		ann = tomlAnnSuffix(ctx, rv, path, s, opts)
+	}
+	fmt.Fprintf(w, "%s%s = [%s\n", pad, styledKey, ann)
+	for _, line := range arrayElemLines(s, leafVal, pad+"  ", opts) {
+		fmt.Fprintln(w, line)
+	}
+	fmt.Fprintf(w, "%s]\n", pad)
+}
+
+// arrayBlockText is renderTOMLArrayBlock as a value: the brackets and the elements
+// between them, for an array expanded inside a reflowed inline table.
+func arrayBlockText(s kongfig.Styler, leafVal any, pad string, opts tomlRenderOpts) string {
+	lines := arrayElemLines(s, leafVal, pad+"  ", opts)
+	if len(lines) == 0 {
+		return "[]"
+	}
+	return "[\n" + strings.Join(lines, "\n") + "\n" + pad + "]"
+}
+
+// arrayElemLines writes an array's elements a line per element, each indented by
+// elemPad and followed by its comma. An element too wide for its line folds, the
+// way a string value of that width would.
+func arrayElemLines(s kongfig.Styler, leafVal any, elemPad string, opts tomlRenderOpts) []string {
+	// The comma after the element is part of its last line, so the fold gets a
+	// column less to work with than the line itself has.
+	elemOpts := colsLess(opts, 1)
+	var lines []string
+	for _, elem := range toTOMLSlice(leafVal) {
+		if folded, ok := foldTOMLString(elem, false, elemPad+"  ", len(elemPad), elemOpts); ok {
+			lines = append(lines, elemPad+render.Value(s, elem, folded)+",")
+			continue
+		}
+		lines = append(lines, elemPad+tomlValueStyled(s, elem)+",")
+	}
+	return lines
+}
+
 // inlineEntry is a table that passed the inline policy, together with the
 // already-rendered value so the width check and the emission agree.
 type inlineEntry struct {
 	key   string
 	path  string
 	value any
+	// sub is the table as written: the value's table minus the keys left out of
+	// it. Annotations are collected from it, so a dropped key does not annotate
+	// a line it no longer appears on. Nil for a redacted entry.
+	sub kongfig.ConfigData
 	// rendered is the styled "{k = v, ...}" form, or the redacted placeholder.
 	rendered string
+	// wrapped is the same table reflowed one pair per line, set only when the
+	// one line does not fit the terminal. It is the value text, newlines and
+	// all, to be written after the entry's "key = ".
+	wrapped string
 }
 
 // splitInlineTables partitions tables into the ones that may be emitted inline
@@ -455,29 +657,138 @@ func inlineCandidate(ctx context.Context, s kongfig.Styler, k string, v any, pat
 		return inlineEntry{}, false
 	}
 	sub, ok := asConfigData(v)
-	if !ok || len(sub) > maxKeys {
+	if !ok {
+		return inlineEntry{}, false
+	}
+	// Filter before counting: a key that is not written does not fill the table.
+	sub = dropOmitEmpty(ctx, path, sub)
+	if len(sub) > maxKeys {
 		return inlineEntry{}, false
 	}
 
-	e := inlineEntry{key: k, path: path, value: v}
+	e := inlineEntry{key: k, path: path, value: v, sub: sub}
 	if rv, isRV := v.(kongfig.RenderedValue); isRV && rv.Redacted {
 		e.rendered = s.Redacted(rv.RedactedDisplay)
+		e.sub = nil
 	} else {
 		if opts.omitNil {
 			sub = stripNils(sub)
+			e.sub = sub
 		}
 		e.rendered = tomlInlineTableCtx(ctx, s, path, sub)
 	}
 
 	// Width only gates the terminal; a written file must not depend on the size
-	// of the terminal that produced it.
-	if opts.inline.checkWidth && opts.cols > 0 {
-		width := len(opts.ind(depth)) + render.VisualWidth(s.Key(tomlKey(k))) + 3 + render.VisualWidth(e.rendered)
-		if width > opts.cols {
-			return inlineEntry{}, false
+	// of the terminal that produced it. An overflow mark waives the gate: the
+	// caller has said the compact shape is worth a line that runs past the edge.
+	if opts.inline.checkWidth && opts.cols > 0 && !opts.inline.overflows(path) {
+		pad := opts.ind(depth)
+		headW := len(pad) + render.VisualWidth(s.Key(tomlKey(k))) + 3
+		if headW+render.VisualWidth(e.rendered) > opts.cols {
+			// Wrapping off leaves nothing but the section header: a 1.0 reader
+			// needs the whole table on one line, and it does not fit one.
+			if !opts.inline.wrap || e.sub == nil {
+				return inlineEntry{}, false
+			}
+			e.wrapped = reflowInlineTable(ctx, s, path, sub, pad, opts)
 		}
 	}
 	return e, true
+}
+
+// reflowInlineTable lays a table too wide for its line out one pair per line: the
+// brace opens the key's line, the pairs sit a level in, and the closing brace
+// lines up under the key. The result is the value text, newlines and all, for a
+// caller that has already written the "key = " ahead of it.
+//
+// The shape is kept rather than traded for a section header. The inline mark says
+// this table is an entry and not a section, and that reading holds however few
+// pairs fit a line.
+//
+// TOML permitted a newline inside an inline table only from 1.1 — 1.0 required
+// one line — so this is written by the render path alone, which is describing a
+// value to a reader. [Parser.Marshal] ignores width and never reaches here, and
+// [WithInlineWrap] turns it off for output a 1.0 parser has to read back.
+func reflowInlineTable(ctx context.Context, s kongfig.Styler, path string, sub kongfig.ConfigData, pad string, opts tomlRenderOpts) string {
+	keys := render.OrderedKeys(ctx, path, sub)
+	if len(keys) == 0 {
+		return "{}"
+	}
+	inner := pad + opts.pairIndent()
+	var b strings.Builder
+	b.WriteString("{\n")
+	for i, k := range keys {
+		styledKey := s.Key(tomlKey(k))
+		// The value starts after the indentation, the key and " = ", and its last
+		// line carries the comma that separates it from the pair below.
+		startCol := len(inner) + render.VisualWidth(styledKey) + 3
+		b.WriteString(inner + styledKey + " = ")
+		b.WriteString(inlineValueText(ctx, s, buildTOMLPath(path, k), sub[k], inner, startCol, opts))
+		if i < len(keys)-1 {
+			b.WriteString(",")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString(pad + "}")
+	return b.String()
+}
+
+// inlineValueText renders a value inside a reflowed inline table. A value that
+// fits its line stays on it; one that does not is expanded in place, the way it
+// would be on a key/value line of its own — an array a line per element, a table
+// reflowed in turn, a long string folded.
+func inlineValueText(ctx context.Context, s kongfig.Styler, path string, v any, indent string, startCol int, opts tomlRenderOpts) string {
+	nested, isTable := asConfigData(v)
+	one := ""
+	if isTable {
+		one = tomlInlineTableCtx(ctx, s, path, nested)
+	} else {
+		one = tomlValueStyled(s, v)
+	}
+	// A trailing comma may still follow, so a value that only just fits does not.
+	if opts.cols <= 0 || startCol+render.VisualWidth(one)+1 <= opts.cols {
+		return one
+	}
+
+	leafVal := v
+	if rv, isRV := v.(kongfig.RenderedValue); isRV {
+		leafVal = rv.Value
+	}
+	switch {
+	case isTable:
+		return reflowInlineTable(ctx, s, path, nested, indent, opts)
+	case isTOMLArray(leafVal):
+		return arrayBlockText(s, leafVal, indent, opts)
+	}
+	if folded, ok := foldTOMLString(leafVal, isRedacted(v), indent+"  ", startCol, colsLess(opts, 1)); ok {
+		return render.Value(s, v, folded)
+	}
+	return one
+}
+
+// pairIndent is the indentation a reflowed inline table puts its pairs at, one
+// level in from the key that owns them. Indentation may be switched off, and a
+// pair flush against its brace would read as a key of the table above it.
+func (o tomlRenderOpts) pairIndent() string {
+	if o.indent == "" {
+		return "  "
+	}
+	return o.indent
+}
+
+// colsLess returns opts with n columns held back, for a value whose line carries
+// something after it.
+func colsLess(opts tomlRenderOpts, n int) tomlRenderOpts {
+	if opts.cols > 0 {
+		opts.cols -= n
+	}
+	return opts
+}
+
+// isRedacted reports whether v stands in for a value it hides.
+func isRedacted(v any) bool {
+	rv, ok := v.(kongfig.RenderedValue)
+	return ok && rv.Redacted
 }
 
 func renderTOMLInline(ctx context.Context, w io.Writer, s kongfig.Styler, e inlineEntry, depth int, opts tomlRenderOpts) {
@@ -485,11 +796,62 @@ func renderTOMLInline(ctx context.Context, w io.Writer, s kongfig.Styler, e inli
 	if help := opts.help(ctx, e.path); help != "" {
 		fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# "+help))
 	}
-	line := pad + s.Key(tomlKey(e.key)) + " = " + e.rendered
-	if rv, ok := e.value.(kongfig.RenderedValue); ok {
-		line += tomlAnnSuffix(ctx, rv, e.path, s, opts)
+	head := pad + s.Key(tomlKey(e.key)) + " = "
+	lines := inlineEntryLines(head, e)
+
+	// Several groups joined onto one line is what wraps in a terminal; the
+	// annotation then reads better as its own comment lines above the entry.
+	groups := inlineAnnotationGroups(ctx, s, e, opts)
+	joined := strings.Join(groups, ", ")
+	if joined != "" && len(groups) > 1 && opts.cols > 0 &&
+		render.VisualWidth(lines[0])+4+render.VisualWidth(joined) > opts.cols {
+		for _, g := range groups {
+			fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+g)
+		}
+		for _, l := range lines {
+			fmt.Fprintln(w, l)
+		}
+		return
 	}
-	fmt.Fprintln(w, line)
+	// The annotation belongs to the key, so it rides the entry's first line — the
+	// opening brace of a reflowed table, as it rides the opening bracket of an
+	// expanded array. Put on the closing brace instead, the aligner could move it
+	// above that line, landing it between the pairs it annotates.
+	lines[0] += annSuffix(joined, s, opts)
+	for _, l := range lines {
+		fmt.Fprintln(w, l)
+	}
+}
+
+// inlineEntryLines lays the entry out after its "key = ", as one line or as the
+// lines of the reflowed table, which carry their own indentation.
+func inlineEntryLines(head string, e inlineEntry) []string {
+	if e.wrapped == "" {
+		return []string{head + e.rendered}
+	}
+	return strings.Split(head+e.wrapped, "\n")
+}
+
+// inlineAnnotationGroups annotates an inlined table. The table's own source wins
+// when it has one; otherwise the leaves that were collapsed into the line supply
+// it, so inlining never costs the reader the provenance a block table would show.
+func inlineAnnotationGroups(ctx context.Context, s kongfig.Styler, e inlineEntry, opts tomlRenderOpts) []string {
+	if opts.omitComments {
+		return nil
+	}
+	if rv, ok := e.value.(kongfig.RenderedValue); ok {
+		if ann := render.Annotation(ctx, rv, e.path, s); ann != "" {
+			return []string{ann}
+		}
+	}
+	sub := e.sub
+	if sub == nil {
+		var ok bool
+		if sub, ok = asConfigData(e.value); !ok {
+			return nil
+		}
+	}
+	return annotationGroups(collectLeafAnnotations(ctx, s, e.path, "", sub, nil))
 }
 
 // asConfigData unwraps v to the table it holds, if any.
@@ -542,7 +904,7 @@ func tableArraySlice(v any) (slice []any, rv kongfig.RenderedValue, isRV, ok boo
 // key/value line and the ones written as [[section]] blocks. The distinction
 // decides emission order, not just formatting: a key/value line placed after a
 // section header would re-parse as a member of that section.
-func splitTableArrays(data kongfig.ConfigData, tableArrs []string, depth int, opts tomlRenderOpts) (inlineArrs, blocks []string) {
+func splitTableArrays(data kongfig.ConfigData, tableArrs []string, prefix string, depth int, opts tomlRenderOpts) (inlineArrs, blocks []string) {
 	for _, k := range tableArrs {
 		slice, rv, isRV, ok := tableArraySlice(data[k])
 		switch {
@@ -551,10 +913,10 @@ func splitTableArrays(data kongfig.ConfigData, tableArrs []string, depth int, op
 		case isRV && rv.Redacted:
 			// The placeholder is a single value, so it is always a key/value line.
 			inlineArrs = append(inlineArrs, k)
-		case tableArrayNeedsBlock(slice, depth, opts):
-			blocks = append(blocks, k)
-		default:
+		case tableArrayInlines(slice, buildTOMLPath(prefix, k), depth, opts):
 			inlineArrs = append(inlineArrs, k)
+		default:
+			blocks = append(blocks, k)
 		}
 	}
 	return inlineArrs, blocks
@@ -587,25 +949,69 @@ func renderTOMLTableArrayInline(ctx context.Context, w io.Writer, s kongfig.Styl
 	// entry: it is written one entry per line, the way an overflowing array of
 	// scalars is. The key stays a key/value line either way, so it keeps its
 	// place ahead of any header.
+	groups := tableArrayAnnotation(ctx, s, path, slice, rv, isRV, opts)
+	ann := strings.Join(groups, ", ")
 	if opts.cols > 0 && keyW+3+render.VisualWidth(valueStr) > opts.cols {
-		if isRV && !opts.omitComments {
-			if ann := render.Annotation(ctx, rv, path, s); ann != "" {
-				fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+ann)
-			}
+		for _, g := range groups {
+			fmt.Fprintf(w, "%s%s\n", pad, s.Comment("# ")+g)
 		}
 		fmt.Fprintf(w, "%s%s = [\n", pad, styledKey)
-		for _, e := range elems {
-			fmt.Fprintf(w, "%s  %s,\n", pad, e)
+		for i, e := range elems {
+			for _, line := range tableArrayElemLines(ctx, s, path, slice[i], e, pad+"  ", opts) {
+				fmt.Fprintf(w, "%s  %s\n", pad, line)
+			}
 		}
 		fmt.Fprintf(w, "%s]\n", pad)
 		return
 	}
 
-	line := pad + styledKey + " = " + valueStr
-	if isRV {
-		line += tomlAnnSuffix(ctx, rv, path, s, opts)
+	fmt.Fprintln(w, pad+styledKey+" = "+valueStr+annSuffix(ann, s, opts))
+}
+
+// tableArrayElemLines returns the lines one element of a one-per-line array
+// occupies, comma included: the single-line form when it fits the terminal, and
+// the pairs broken across lines when it does not.
+//
+// Breaking beats letting the terminal wrap it, because the terminal wraps
+// mid-token and at column zero, where the continuation reads as a new entry
+// rather than as more of this one.
+func tableArrayElemLines(ctx context.Context, s kongfig.Styler, path string, elem any, rendered, indent string, opts tomlRenderOpts) []string {
+	cd, isTable := elem.(kongfig.ConfigData)
+	// One column of the width belongs to the comma the element ends with.
+	width := len(indent) + render.VisualWidth(rendered) + 1
+	if opts.cols <= 0 || width <= opts.cols || !isTable {
+		return []string{rendered + ","}
 	}
-	fmt.Fprintln(w, line)
+	if opts.omitNil {
+		cd = stripNils(cd)
+	}
+	cd = dropOmitEmpty(ctx, path, cd)
+	// One column of the budget belongs to the comma the last line ends with.
+	lines := wrapInlineTable(tomlInlinePairs(ctx, s, path, cd), indent, opts.cols-1)
+	lines[len(lines)-1] += ","
+	return lines
+}
+
+// tableArrayAnnotation is inlineAnnotationGroups for an array of tables: the
+// array's own source when it has one, otherwise the sources of the leaves the
+// key/value line collapsed. It returns bare groups, since the overflow form
+// writes them on their own lines rather than as a suffix.
+func tableArrayAnnotation(ctx context.Context, s kongfig.Styler, path string, slice []any, rv kongfig.RenderedValue, isRV bool, opts tomlRenderOpts) []string {
+	if opts.omitComments {
+		return nil
+	}
+	if isRV {
+		if ann := render.Annotation(ctx, rv, path, s); ann != "" {
+			return []string{ann}
+		}
+	}
+	var parts []leafAnnotation
+	for _, elem := range slice {
+		if sub, isTable := asConfigData(elem); isTable {
+			parts = collectLeafAnnotations(ctx, s, path, "", sub, parts)
+		}
+	}
+	return annotationGroups(parts)
 }
 
 // tableArrayElems renders every element of a table-array as an inline table,
@@ -618,6 +1024,7 @@ func tableArrayElems(ctx context.Context, s kongfig.Styler, path string, slice [
 			if opts.omitNil {
 				cd = stripNils(cd)
 			}
+			cd = dropOmitEmpty(ctx, path, cd)
 			elems = append(elems, tomlInlineTableCtx(ctx, s, path, cd))
 			continue
 		}
@@ -629,8 +1036,15 @@ func tableArrayElems(ctx context.Context, s kongfig.Styler, path string, slice [
 // renderTOMLTableArrayBlock writes an array of tables as [[path]] sections.
 func renderTOMLTableArrayBlock(ctx context.Context, w io.Writer, s kongfig.Styler, v any, path string, depth int, opts tomlRenderOpts) error {
 	slice, _, _, ok := tableArraySlice(v)
-	if !ok {
+	if !ok || len(slice) == 0 {
 		return nil
+	}
+	// The help text describes the list, not each entry, so it is emitted once
+	// above the first block — and spent there, for the reason in [renderMap].
+	// It has no trailing newline: the blank line each block starts with ends the
+	// comment line, which also keeps the comment attached to the block below it.
+	if help := opts.help(ctx, path); help != "" {
+		fmt.Fprintf(w, "\n%s%s", opts.ind(depth), s.Comment("# "+help))
 	}
 	for _, elem := range slice {
 		cd, ok := elem.(kongfig.ConfigData)
@@ -649,7 +1063,11 @@ func tomlAnnSuffix(ctx context.Context, rv kongfig.RenderedValue, path string, s
 	if opts.omitComments {
 		return ""
 	}
-	ann := render.Annotation(ctx, rv, path, s)
+	return annSuffix(render.Annotation(ctx, rv, path, s), s, opts)
+}
+
+// annSuffix decorates an already-rendered annotation as a trailing comment.
+func annSuffix(ann string, s kongfig.Styler, opts tomlRenderOpts) string {
 	if ann == "" {
 		return ""
 	}
@@ -657,6 +1075,89 @@ func tomlAnnSuffix(ctx context.Context, rv kongfig.RenderedValue, path string, s
 		return render.AnnMarker + "  " + s.Comment("# ") + ann
 	}
 	return "  " + s.Comment("# ") + ann
+}
+
+// leafAnnotation is one collapsed leaf: its key relative to the inlined table,
+// and the annotation that leaf would have carried on a line of its own.
+type leafAnnotation struct{ key, ann string }
+
+// collectLeafAnnotations walks an inlined subtree in render order, gathering the
+// annotations of the leaves it collapsed. Identical key/annotation pairs — which
+// arrays of tables produce for every element — are recorded once.
+func collectLeafAnnotations(ctx context.Context, s kongfig.Styler, path, rel string, sub kongfig.ConfigData, out []leafAnnotation) []leafAnnotation {
+	for _, k := range render.OrderedKeys(ctx, path, sub) {
+		childPath := buildTOMLPath(path, k)
+		childRel := k
+		if rel != "" {
+			childRel = rel + "." + k
+		}
+		v := sub[k]
+		if nested, isTable := asConfigData(v); isTable {
+			out = collectLeafAnnotations(ctx, s, childPath, childRel, nested, out)
+			continue
+		}
+		if slice, isSlice := v.([]any); isSlice {
+			for _, elem := range slice {
+				if nested, isTable := asConfigData(elem); isTable {
+					out = collectLeafAnnotations(ctx, s, childPath, childRel, nested, out)
+				}
+			}
+			continue
+		}
+		rv, isRV := v.(kongfig.RenderedValue)
+		if !isRV {
+			continue
+		}
+		ann := render.Annotation(ctx, rv, childPath, s)
+		if ann == "" || containsLeafAnnotation(out, childRel, ann) {
+			continue
+		}
+		out = append(out, leafAnnotation{key: childRel, ann: ann})
+	}
+	return out
+}
+
+func containsLeafAnnotation(parts []leafAnnotation, key, ann string) bool {
+	for _, p := range parts {
+		if p.key == key && p.ann == ann {
+			return true
+		}
+	}
+	return false
+}
+
+// annotationGroups renders the collapsed leaves as annotation groups: a single
+// bare label when they all agree — naming one source for a mixed table would be
+// wrong — otherwise one "keys: label" group per distinct label, in the order the
+// labels first appear. Grouping keeps a repeated source from being spelled out
+// once per key, which is what made these lines long enough to wrap.
+func annotationGroups(parts []leafAnnotation) []string {
+	if len(parts) == 0 {
+		return nil
+	}
+	same := true
+	for _, p := range parts[1:] {
+		if p.ann != parts[0].ann {
+			same = false
+			break
+		}
+	}
+	if same {
+		return []string{parts[0].ann}
+	}
+	order := make([]string, 0, len(parts))
+	keys := make(map[string][]string, len(parts))
+	for _, p := range parts {
+		if _, seen := keys[p.ann]; !seen {
+			order = append(order, p.ann)
+		}
+		keys[p.ann] = append(keys[p.ann], p.key)
+	}
+	groups := make([]string, len(order))
+	for i, ann := range order {
+		groups[i] = strings.Join(keys[ann], ", ") + ": " + ann
+	}
+	return groups
 }
 
 // isTableArray reports whether v is a []any whose every element is a ConfigData.
@@ -674,32 +1175,65 @@ func isTableArray(v any) bool {
 	return true
 }
 
-// tableArrayNeedsBlock reports whether a table-array has to use [[...]] block
-// form rather than a key/value line. Returns true when forceBlock is set, when
-// an element contains a nested ConfigData sub-tree — inline TOML cannot express
-// a nested table, so those have no other form — or when a single element is too
-// wide for a line of its own. The width of the whole array does not decide it:
-// an array that overflows is written one element per line instead.
-func tableArrayNeedsBlock(slice []any, depth int, opts tomlRenderOpts) bool {
+// tableArrayInlines reports whether a table-array may be written as a key/value
+// line rather than [[...]] sections. Every element must be a small object by the
+// same key limit that governs inline tables — the elements are what becomes an
+// inline table, so the limit applies to each of them, and [WithInlineTables]
+// marks move that limit per path. Every element must also have an inline form at
+// all: TOML cannot nest a table inside an inline table.
+//
+// The width of the whole array does not decide it: an array that overflows is
+// written one element per line instead. Neither does the width of one element,
+// on its own — an element wider than the terminal wraps, and a wrap is usually
+// cheaper than the block form, which spends a header plus a line per key. What
+// decides it is which of the two costs more lines, so a terminal narrow enough
+// that wrapping buys nothing still gets its sections — unless the path is marked
+// by [WithInlineOverflow], which waives the comparison.
+func tableArrayInlines(slice []any, path string, depth int, opts tomlRenderOpts) bool {
 	if opts.forceBlock {
-		return true
+		return false
 	}
+	// Unlike a table, an array of tables is inlinable without a mark: the block
+	// form is the verbose one, so the default runs the other way. A mark only
+	// moves the key limit for this path.
+	maxKeys := opts.inline.defaultMax
+	if n, marked := opts.inline.maxKeysFor(path); marked {
+		maxKeys = n
+	}
+	// An overflow mark takes the cost comparison out of it: the caller has said
+	// the per-element shape is worth keeping however narrow the terminal is.
+	overflow := opts.inline.overflows(path)
 	for _, elem := range slice {
 		cd, ok := elem.(kongfig.ConfigData)
-		if !ok {
-			continue
+		if !ok || len(cd) > maxKeys {
+			return false
 		}
 		for _, v := range cd {
 			if _, ok := v.(kongfig.ConfigData); ok {
-				return true
+				return false
 			}
 		}
-		// "  {...}," on its own line, indented with the key that owns it.
-		if opts.cols > 0 && len(opts.ind(depth))+2+render.VisualWidth(tomlValue(cd))+1 > opts.cols {
-			return true
+		// "  {...}," on its own line, indented with the key that owns it. Width
+		// only gates the terminal: a written file must not depend on the size of
+		// the terminal that produced it.
+		if opts.inline.checkWidth && opts.cols > 0 && !overflow {
+			line := len(opts.ind(depth)) + 2 + render.VisualWidth(tomlValue(cd)) + 1
+			// With wrapping off there is no reflowed form to weigh the block form
+			// against: an element that does not fit its line has to become a
+			// [[block]], because a reflowed inline table is TOML 1.1 and the whole
+			// point of the option is output a 1.0 parser can read. See
+			// [WithInlineWrap].
+			if !opts.inline.wrap && line > opts.cols {
+				return false
+			}
+			// Ties go to the block form, which is the more explicit of two shapes
+			// that cost the same.
+			if lines := (line + opts.cols - 1) / opts.cols; lines >= len(cd)+1 {
+				return false
+			}
 		}
 	}
-	return false
+	return true
 }
 
 // isTOMLArray reports whether v is a slice type for multiline-overflow detection.
@@ -928,7 +1462,9 @@ func stripNils(sub kongfig.ConfigData) kongfig.ConfigData {
 		if isRV {
 			leaf = rv.Value
 		}
-		if leaf == nil {
+		// A redacted placeholder stands in for the value, so it survives even
+		// though what it hides is nil.
+		if leaf == nil && (!isRV || !rv.Redacted) {
 			continue
 		}
 		stripped, changed := stripNilsValue(leaf)
@@ -970,15 +1506,107 @@ func stripNilsValue(v any) (any, bool) {
 	}
 }
 
+// dropEmptyKeys removes the keys marked omitempty that hold nothing, so a
+// table's shape follows what is actually configured.
+func dropEmptyKeys(ctx context.Context, prefix string, data kongfig.ConfigData, keys []string) []string {
+	if len(kongfig.OmitEmptyKey.GetAll(ctx)) == 0 {
+		return keys
+	}
+	out := keys[:0:0]
+	for _, k := range keys {
+		if render.OmitEmpty(ctx, buildTOMLPath(prefix, k), data[k]) {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// dropOmitEmpty rewrites a subtree without its marked-empty keys, for the inline
+// forms that format a table before it reaches renderMap. Nested tables are
+// rewritten too, so a mark on a key several levels inside an inlined table still
+// applies — collapsed onto one line, the reader cannot delete it by hand.
+func dropOmitEmpty(ctx context.Context, path string, sub kongfig.ConfigData) kongfig.ConfigData {
+	if len(kongfig.OmitEmptyKey.GetAll(ctx)) == 0 {
+		return sub
+	}
+	out := make(kongfig.ConfigData, len(sub))
+	for k, v := range sub {
+		childPath := buildTOMLPath(path, k)
+		if render.OmitEmpty(ctx, childPath, v) {
+			continue
+		}
+		switch val := v.(type) {
+		case kongfig.ConfigData:
+			out[k] = dropOmitEmpty(ctx, childPath, val)
+		case kongfig.RenderedValue:
+			if nested, isTable := val.Value.(kongfig.ConfigData); isTable {
+				val.Value = dropOmitEmpty(ctx, childPath, nested)
+			}
+			out[k] = val
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // tomlInlineTableCtx formats a table as an inline table, honoring the key order
 // configured for path.
 func tomlInlineTableCtx(ctx context.Context, s kongfig.Styler, path string, sub kongfig.ConfigData) string {
+	return "{" + strings.Join(tomlInlinePairs(ctx, s, path, sub), ", ") + "}"
+}
+
+// tomlInlinePairs returns an inline table's key/value pairs in the key order
+// configured for path, unjoined, for a caller that has to decide where the line
+// breaks go.
+func tomlInlinePairs(ctx context.Context, s kongfig.Styler, path string, sub kongfig.ConfigData) []string {
 	keys := render.OrderedKeys(ctx, path, sub)
 	pairs := make([]string, len(keys))
 	for i, k := range keys {
 		pairs[i] = s.Key(tomlKey(k)) + " = " + tomlValueStyled(s, sub[k])
 	}
-	return "{" + strings.Join(pairs, ", ") + "}"
+	return pairs
+}
+
+// wrapInlineTable breaks an inline table's pairs across lines that fit cols,
+// returning the lines without their indentation. The first line opens with "{"
+// and the last closes with "}"; every break lands after a pair's comma, and
+// continuation lines are offset by one column so they align under the first pair
+// rather than under the brace.
+//
+// TOML permitted this only from 1.1 — 1.0 required an inline table to be one
+// line — so the wrap is written by the render path alone, which is describing a
+// value to a reader. [Parser.Marshal] ignores width and never reaches here, and
+// what it writes stays readable to a 1.0 parser.
+func wrapInlineTable(pairs []string, indent string, cols int) []string {
+	if len(pairs) == 0 {
+		return []string{"{}"}
+	}
+	var lines []string
+	cur, curW := "{", len(indent)+1
+	for i, pair := range pairs {
+		// The comma travels with the pair it follows, so a break never leaves a
+		// line starting with one.
+		piece := pair + ","
+		if i == len(pairs)-1 {
+			piece = pair + "}"
+		}
+		pieceW := render.VisualWidth(piece)
+		sep := ""
+		if i > 0 {
+			sep = " "
+		}
+		if i > 0 && curW+len(sep)+pieceW > cols {
+			lines = append(lines, cur)
+			// One column past the indent, under the line above's first pair.
+			cur, curW = " "+piece, len(indent)+1+pieceW
+			continue
+		}
+		cur += sep + piece
+		curW += len(sep) + pieceW
+	}
+	return append(lines, cur)
 }
 
 // tomlKey renders a table key, quoting it when it is not a valid TOML bare key.

@@ -90,16 +90,60 @@ func TestRender_WithInlineMaxKeys_RaisesTheLimit(t *testing.T) {
 	}
 }
 
+// The width gate still ends in a section header, once the reflow that normally
+// answers an over-wide table is off.
 func TestRender_InlineTable_TooWideForTerminal_StaysBlock(t *testing.T) {
 	data := bucketData(kongfig.ConfigData{"path": "/a/very/long/path/that/does/not/fit"})
 
-	p := tomlparser.New(tomlparser.WithInlineTables("buckets.*"))
+	p := tomlparser.New(tomlparser.WithInlineTables("buckets.*"), tomlparser.WithInlineWrap(false))
 	ctx := render.WithTTYSizeCtx(context.Background(), 20, 0)
 	out := renderPlain(ctx, t, p, data)
 
 	want := "  [buckets.work]\n"
 	if !strings.Contains(out, want) {
 		t.Errorf("expected block table on a narrow terminal\nwant substring:\n%q\ngot:\n%s", want, out)
+	}
+}
+
+func TestRender_InlineTable_OverflowMark_StaysInline(t *testing.T) {
+	// The mark says the one-line form is worth more than a line that ends inside
+	// the window, so the width check no longer demotes it.
+	data := bucketData(kongfig.ConfigData{"path": "/a/very/long/path/that/does/not/fit"})
+
+	p := tomlparser.New(tomlparser.WithInlineTables("buckets.*"), tomlparser.WithInlineOverflow("buckets.*"))
+	ctx := render.WithTTYSizeCtx(context.Background(), 20, 0)
+	out := renderPlain(ctx, t, p, data)
+
+	want := "  work = {path = \"/a/very/long/path/that/does/not/fit\"}\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the marked table to keep its line\nwant substring:\n%q\ngot:\n%s", want, out)
+	}
+}
+
+func TestRender_InlineTable_OverflowMarkAlone_Inlines(t *testing.T) {
+	// An overflow mark implies an inline one: asking for the compact form past the
+	// edge of the window is asking for the compact form.
+	data := bucketData(kongfig.ConfigData{"path": "/w"})
+
+	p := tomlparser.New(tomlparser.WithInlineOverflow("buckets.*"))
+	out := renderPlain(context.Background(), t, p, data)
+
+	want := "  work = {path = \"/w\"}\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the overflow mark to inline on its own\nwant substring:\n%q\ngot:\n%s", want, out)
+	}
+}
+
+func TestRender_InlineTable_OverflowFromContext_StaysInline(t *testing.T) {
+	data := bucketData(kongfig.ConfigData{"path": "/a/very/long/path/that/does/not/fit"})
+
+	ctx := kongfig.InlineOverflowKey.WithCtx(context.Background(), map[string]bool{"buckets.*": true})
+	ctx = render.WithTTYSizeCtx(ctx, 20, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	want := "  work = {path = \"/a/very/long/path/that/does/not/fit\"}\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the schema-marked path to keep its line\nwant substring:\n%q\ngot:\n%s", want, out)
 	}
 }
 
@@ -151,6 +195,12 @@ func rewriteData(entries ...kongfig.ConfigData) kongfig.ConfigData {
 	return kongfig.ConfigData{"rules": elems}
 }
 
+// rulesParser marks the rules array, which for an array of tables only moves the
+// key limit — the way a ,inline=N struct tag on the field would.
+func rulesParser(opts ...tomlparser.Option) *tomlparser.Parser {
+	return tomlparser.New(append([]tomlparser.Option{tomlparser.WithInlineTables("rules")}, opts...)...)
+}
+
 func TestRender_TableArray_FitsOnOneLine_StaysOneLine(t *testing.T) {
 	data := rewriteData(kongfig.ConfigData{"match": "a", "org": "b"})
 
@@ -189,8 +239,10 @@ func TestRender_TableArray_TooWideForOneLine_GoesOnePerLine(t *testing.T) {
 }
 
 func TestRender_TableArray_EntryTooWideForALine_StaysBlock(t *testing.T) {
-	// One entry that does not fit a line of its own has nowhere left to go: the
-	// per-line form would overflow just as the one-line form did.
+	// An entry that wraps onto as many lines as its block form would take has
+	// nothing left to win, so the block form — the more explicit of the two —
+	// keeps it. Two keys wrapping onto three lines in a 30-column terminal is
+	// exactly that tie.
 	data := rewriteData(kongfig.ConfigData{"match": "@/a-very-long-pattern-that-does-not-fit-anywhere", "org": "uploaded"})
 
 	ctx := render.WithTTYSizeCtx(context.Background(), 30, 0)
@@ -198,6 +250,143 @@ func TestRender_TableArray_EntryTooWideForALine_StaysBlock(t *testing.T) {
 
 	if !strings.Contains(out, "[[rules]]") {
 		t.Errorf("expected section headers for an oversized entry:\n%s", out)
+	}
+}
+
+func TestRender_TableArray_OversizedEntryWithOverflowMark_GoesOnePerLine(t *testing.T) {
+	// Same tie as the test above, with the mark added: the shape of the list is
+	// what the reader is after, so it keeps a line per rule instead of a header
+	// per rule even where wrapping buys nothing.
+	data := rewriteData(kongfig.ConfigData{"match": "@/a-very-long-pattern-that-does-not-fit-anywhere", "org": "uploaded"})
+
+	p := tomlparser.New(tomlparser.WithInlineOverflow("rules"))
+	ctx := render.WithTTYSizeCtx(context.Background(), 30, 0)
+	out := renderPlain(ctx, t, p, data)
+
+	if strings.Contains(out, "[[rules]]") {
+		t.Errorf("the overflow mark did not hold off the section headers:\n%s", out)
+	}
+	// How wide an entry is allowed to run before its own keys wrap is the
+	// emitter's business; what the mark decides is that the entry stays an entry.
+	want := "rules = [\n  {match = \"@/a-very-long-pattern-that-does-not-fit-anywhere\","
+	if !strings.Contains(out, want) {
+		t.Errorf("expected one entry per line\nwant substring:\n%q\ngot:\n%s", want, out)
+	}
+}
+
+func TestRender_TableArray_OverflowFromContext_GoesOnePerLine(t *testing.T) {
+	data := rewriteData(kongfig.ConfigData{"match": "@/a-very-long-pattern-that-does-not-fit-anywhere", "org": "uploaded"})
+
+	ctx := kongfig.InlineOverflowKey.WithCtx(context.Background(), map[string]bool{"rules": true})
+	ctx = render.WithTTYSizeCtx(ctx, 30, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	if strings.Contains(out, "[[rules]]") {
+		t.Errorf("the schema mark did not hold off the section headers:\n%s", out)
+	}
+}
+
+func TestRender_TableArray_EntryBarelyOverTheWidth_WrapsItsPairs(t *testing.T) {
+	// An entry a few columns too wide is the case the width test used to get
+	// wrong: one overflowing entry demoted the whole array, trading a single
+	// wrapped line for a header plus a line per key. Wrapping wins until it
+	// costs as much as the block form — and the entry breaks between its pairs,
+	// indented under the first one, rather than being left to the terminal, which
+	// would break mid-token at column zero.
+	data := rewriteData(
+		kongfig.ConfigData{"match": "a", "org": "b"},
+		kongfig.ConfigData{"match": "@/a-pattern-just-over-the-line", "org": "uploaded"},
+	)
+
+	ctx := render.WithTTYSizeCtx(context.Background(), 60, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	if strings.Contains(out, "[[rules]]") {
+		t.Errorf("one entry over the width demoted the whole array:\n%s", out)
+	}
+	want := "  {match = \"a\", org = \"b\"},\n" +
+		"  {match = \"@/a-pattern-just-over-the-line\",\n" +
+		"   org = \"uploaded\"},\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the wide entry wrapped between its pairs\nwant substring:\n%q\ngot:\n%s", want, out)
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if render.VisualWidth(line) > 60 {
+			t.Errorf("line runs past the terminal (%d cols): %q", render.VisualWidth(line), line)
+		}
+	}
+}
+
+func TestRender_TableArray_WrappedEntry_ReparsesUnchanged(t *testing.T) {
+	// The wrap relies on TOML 1.1 allowing a newline inside an inline table, so
+	// pin that the wrapped document still reads back as the same data.
+	data := rewriteData(
+		kongfig.ConfigData{"match": "@/a-pattern-just-over-the-line", "org": "uploaded"},
+	)
+
+	ctx := render.WithTTYSizeCtx(context.Background(), 60, 0)
+	out := renderPlain(ctx, t, tomlparser.New(tomlparser.WithInlineOverflow("rules")), data)
+	if !strings.Contains(out, ",\n   org") {
+		t.Fatalf("expected a wrapped entry to reparse; nothing wrapped:\n%s", out)
+	}
+
+	back, err := tomlparser.Default.Unmarshal([]byte(out))
+	if err != nil {
+		t.Fatalf("wrapped inline table did not reparse: %v\n%s", err, out)
+	}
+	rules, ok := back["rules"].([]any)
+	if !ok || len(rules) != 1 {
+		t.Fatalf("rules did not survive the round trip: %#v\n%s", back["rules"], out)
+	}
+	elem, isTable := rules[0].(kongfig.ConfigData)
+	if !isTable {
+		t.Fatalf("entry = %T, want ConfigData", rules[0])
+	}
+	if elem["match"] != "@/a-pattern-just-over-the-line" || elem["org"] != "uploaded" {
+		t.Errorf("reparsed entry = %#v, want the original", elem)
+	}
+}
+
+func TestRender_TableArray_EntryOverMaxKeys_StaysBlock(t *testing.T) {
+	// The entries are no longer small objects, so the array gets sections even
+	// though it fits the terminal. One entry past the limit settles all of them.
+	data := rewriteData(
+		kongfig.ConfigData{"match": "a", "org": "b"},
+		kongfig.ConfigData{"match": "c", "org": "d", "bucket": "e", "vcs": "git"},
+	)
+
+	ctx := render.WithTTYSizeCtx(context.Background(), 200, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	if !strings.Contains(out, "[[rules]]") {
+		t.Errorf("expected section headers past the key limit:\n%s", out)
+	}
+}
+
+func TestRender_TableArray_WithInlineMaxKeys_RaisesTheLimit(t *testing.T) {
+	data := rewriteData(kongfig.ConfigData{"match": "c", "org": "d", "bucket": "e", "vcs": "git"})
+
+	ctx := render.WithTTYSizeCtx(context.Background(), 200, 0)
+	out := renderPlain(ctx, t, rulesParser(tomlparser.WithInlineMaxKeys(4)), data)
+
+	want := "rules = [{bucket = \"e\", match = \"c\", org = \"d\", vcs = \"git\"}]\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected an inline array at the raised limit\nwant substring:\n%q\ngot:\n%s", want, out)
+	}
+}
+
+func TestRender_TableArray_FromContext_HonorsPerPathMaxKeys(t *testing.T) {
+	// The schema route carries its own limit per marked path, so a field tagged
+	// ,inline=4 inlines entries the default limit would have blocked.
+	data := rewriteData(kongfig.ConfigData{"match": "c", "org": "d", "bucket": "e", "vcs": "git"})
+
+	ctx := kongfig.InlineTablesKey.WithCtx(context.Background(), map[string]int{"rules": 4})
+	ctx = render.WithTTYSizeCtx(ctx, 200, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	want := "rules = [{bucket = \"e\", match = \"c\", org = \"d\", vcs = \"git\"}]\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the schema mark to inline the array\nwant substring:\n%q\ngot:\n%s", want, out)
 	}
 }
 

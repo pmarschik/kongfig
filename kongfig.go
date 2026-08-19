@@ -221,6 +221,10 @@ func New(opts ...Option) *Kongfig {
 // order, so rendered output follows the Go struct layout instead of
 // alphabetical order.
 //
+// Descriptions from help= tags are registered as render help texts, so rendered
+// output carries them as comments above each key without a [WithRenderHelpTexts]
+// call.
+//
 // Fields tagged "inline" are published under [InlineTablesKey], letting formats
 // with a compact table syntax (TOML inline tables) emit them on one line when
 // they are short enough — both when rendering and when writing a config file.
@@ -246,6 +250,9 @@ func NewFor[T any](opts ...Option) *Kongfig {
 	cfgPaths := schema.ConfigPaths[T]()
 	if len(cfgPaths) > 0 {
 		opts = append([]Option{withConfigPaths(cfgPaths)}, opts...)
+	}
+	if texts := schema.HelpTextPaths[T](); len(texts) > 0 {
+		opts = append([]Option{WithHelpTexts(texts)}, opts...)
 	}
 	if inlines := schema.InlineTablePaths[T](); len(inlines) > 0 {
 		entries := make(map[string]int, len(inlines))

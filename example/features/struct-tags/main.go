@@ -16,7 +16,6 @@ import (
 	kongfig "github.com/pmarschik/kongfig"
 	yamlparser "github.com/pmarschik/kongfig/parsers/yaml"
 	structsprovider "github.com/pmarschik/kongfig/providers/structs"
-	"github.com/pmarschik/kongfig/schema"
 	"github.com/pmarschik/kongfig/style/plain"
 )
 
@@ -30,8 +29,8 @@ type DBConfig struct {
 }
 
 // Config demonstrates all tag variants including help= inline documentation.
-// schema.HelpTextPaths[Config]() reflects on these tags and returns a
-// map[string]string that can be passed to WithRenderHelpTexts.
+// NewFor[Config] reflects on these tags (via schema.HelpTextPaths) and registers
+// the descriptions, so rendered output carries them with no extra wiring.
 type Config struct {
 	Host     string   `kongfig:"host,default=localhost,help='hostname or IP to listen on'"`
 	APIKey   string   `kongfig:"api-key,redacted"`
@@ -56,14 +55,12 @@ func main() {
 	kf := kongfig.NewFor[Config]()
 	kf.MustLoad(ctx, structsprovider.Defaults(defaults))
 
-	// schema.HelpTextPaths reflects on the struct tags and builds the help map.
-	// WithRenderHelpTexts emits each description as a comment above its key,
-	// at most once per render call.
-	helpTexts := schema.HelpTextPaths[Config]()
-
-	if err := kf.RenderWith(ctx, os.Stdout, yamlparser.Default.Bind(plain.New()),
-		kongfig.WithRenderHelpTexts(helpTexts),
-	); err != nil {
+	// NewFor already reflected on the help= tags and registered the texts, so
+	// each description is emitted as a comment above its key — at most once per
+	// render call — without any WithRenderHelpTexts call. Pass
+	// kongfig.WithRenderHelpTexts(schema.HelpTextPaths[Config]()) to override the
+	// derived set for a single render.
+	if err := kf.RenderWith(ctx, os.Stdout, yamlparser.Default.Bind(plain.New())); err != nil {
 		fmt.Fprintln(os.Stderr, "render:", err)
 		os.Exit(1)
 	}

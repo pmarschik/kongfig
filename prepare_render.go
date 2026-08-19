@@ -68,6 +68,15 @@ func prepareRender(ctx context.Context, kf *Kongfig, opts ...RenderOption) (Conf
 			ro.bind(RenderKeyOrderKey, cfg.FieldOrder)
 		}
 	}
+	if _, ok := readOpts[map[string]string](ro, RenderHelpTextsKey); !ok {
+		if cfg.HelpTexts != nil {
+			// A fresh seen-set per render call, matching WithRenderHelpTexts:
+			// each help text is emitted once per call, not once per process.
+			seen := make(map[string]bool)
+			ro.bind(RenderHelpTextsKey, cfg.HelpTexts)
+			ro.bind(RenderHelpTextsSeenKey, &seen)
+		}
+	}
 
 	// Merge registered path meta from Kongfig (e.g. split separators, codec paths from NewFor[T]).
 	// codecPathsKey entries flow through here automatically — no special injection needed.

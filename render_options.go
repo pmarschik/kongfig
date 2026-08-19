@@ -13,6 +13,7 @@ type renderConfig struct {
 	RedactedPaths   map[string]bool
 	RedactFn        func(path, value string) string
 	FieldOrder      map[string][]string
+	HelpTexts       map[string]string
 	DefaultFormat   string
 	HideEnvVarNames bool
 	HideFlagNames   bool
@@ -24,6 +25,18 @@ type renderConfig struct {
 // automatically by [Kongfig.RenderWith].
 func WithRedacted(paths map[string]bool) Option {
 	return func(k *Kongfig) { k.render.RedactedPaths = paths }
+}
+
+// WithHelpTexts registers per-path help text shown as comments above each key,
+// for every render call on this instance. Use [NewFor] to derive the texts
+// automatically from help= struct tags, or [schema.HelpTextPaths] to compute
+// them explicitly.
+//
+// A call-time [WithRenderHelpTexts] replaces the registered set for that call.
+// Each render call gets a fresh "already emitted" set, so the once-per-render
+// semantics of [WithRenderHelpTexts] hold here too.
+func WithHelpTexts(texts map[string]string) Option {
+	return func(k *Kongfig) { k.render.HelpTexts = texts }
 }
 
 // WithRedactionFunc sets a custom function to determine the redacted display

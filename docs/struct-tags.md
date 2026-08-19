@@ -86,9 +86,8 @@ are omitted, unlike `structs.Defaults(instance)` which includes all non-zero fie
 
 ## help= option
 
-`kongfig:"name,help='description'"` annotates a field with a human-readable description.
-`schema.HelpTextPaths[T]()` reflects on `T` and returns a `map[string]string` of dot-path
-→ help text, which can be passed directly to `WithRenderHelpTexts`:
+`kongfig:"name,help='description'"` annotates a field with a human-readable description,
+rendered as a comment above the key.
 
 ```go
 type Config struct {
@@ -97,11 +96,22 @@ type Config struct {
     Labels   map[string]string `kongfig:"labels,help='arbitrary key=value labels'"`
 }
 
+kf := kongfig.NewFor[Config]()
+kf.RenderWith(ctx, w, renderer) // help comments included
+```
+
+`NewFor[T]` derives the texts automatically — no extra call needed. Under the hood it uses
+`schema.HelpTextPaths[T]()`, which reflects on `T` and returns a `map[string]string` of
+dot-path → help text:
+
+```go
 texts := schema.HelpTextPaths[Config]()
 // {"host": "hostname or IP to listen on", "port": "TCP port", "labels": "arbitrary key=value labels"}
-
-kf.RenderWith(ctx, w, renderer, kongfig.WithRenderHelpTexts(texts))
 ```
+
+Register a set explicitly with the `WithHelpTexts(texts)` option (instance-level, e.g. when
+constructing with `New` rather than `NewFor`), or override the registered set for a single
+render call with `WithRenderHelpTexts(texts)`.
 
 Use single-quoted values to allow commas and equals signs:
 

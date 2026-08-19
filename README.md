@@ -60,11 +60,11 @@ Use `structs.TagDefaults[T]()` to drive defaults from `default=` struct tag
 annotations instead of a populated instance — see
 [struct-tags.md](docs/struct-tags.md#default-option).
 
-Use `schema.HelpTextPaths[T]()` to collect `help='...'` struct tag annotations as a
-`map[string]string` and pass them to `WithRenderHelpTexts` to emit human descriptions
-as comment lines above each key. Supports prefix matching (one annotation covers all
-keys in a map/slice field) and emits each text at most once per render call — see
-[struct-tags.md](docs/struct-tags.md#help-option).
+`help='...'` struct tag annotations are emitted as comment lines above each key.
+`NewFor[T]` collects them automatically; `WithHelpTexts` registers a set explicitly and
+`WithRenderHelpTexts` overrides it for one render call. Supports prefix matching (one
+annotation covers all keys in a map/slice field) and emits each text at most once per
+render call — see [struct-tags.md](docs/struct-tags.md#help-option).
 
 See [`example/minimal`](example/minimal/) for the full minimal example.
 

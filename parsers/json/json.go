@@ -40,6 +40,7 @@ var (
 	_ kongfig.ParserNamer    = Parser{}
 	_ kongfig.OutputProvider = Parser{}
 	_ kongfig.KeyOrderParser = Parser{}
+	_ kongfig.CtxMarshaler   = Parser{}
 )
 
 func (p Parser) indent() string {
@@ -70,7 +71,31 @@ func (p Parser) Unmarshal(b []byte) (kongfig.ConfigData, error) {
 // Marshal encodes a map to JSON bytes.
 // Uses compact encoding when Compact is true; otherwise uses indented output.
 // The returned bytes always end with a trailing newline.
+//
+// Keys are sorted, as encoding/json sorts map keys. Use [Parser.MarshalCtx] with a
+// key order in the context to write a document in its own order instead.
 func (p Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
+	return p.MarshalCtx(context.Background(), data)
+}
+
+// MarshalCtx is [Parser.Marshal] with a context — the [kongfig.CtxMarshaler]
+// implementation — so a key order carried under [kongfig.RenderKeyOrderKey] is
+// written out as-is, which is what lets a config file be rewritten in the order it
+// was parsed rather than alphabetized. Keys the order does not name follow it
+// alphabetically, and array elements keep the encoder's ordering since an order is
+// keyed by path and elements have no path of their own. A sortby= mark or a
+// [kongfig.KeySortFunc] in the context orders keys too, and is honored the same
+// way. Without anything in the context that orders keys the output is
+// byte-for-byte [Parser.Marshal]'s. See [kongfig.WithRenderKeyOrderCtx] and
+// [kongfig.WithRenderKeySortCtx] for building such a context.
+func (p Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte, error) {
+	if render.HasKeyOrder(ctx) {
+		var buf bytes.Buffer
+		if err := p.writeOrderedObject(ctx, &buf, "", "", data); err != nil {
+			return nil, err
+		}
+		return append(buf.Bytes(), '\n'), nil
+	}
 	var (
 		b   []byte
 		err error
@@ -84,6 +109,78 @@ func (p Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
 		return nil, err
 	}
 	return append(b, '\n'), nil
+}
+
+// writeOrderedObject writes data as a JSON object with its keys in the order ctx
+// gives for path. cur is the indentation the object's own line already carries, so
+// its members sit one level deeper and its closing brace lines up with the key
+// that opened it.
+func (p Parser) writeOrderedObject(
+	ctx context.Context, buf *bytes.Buffer, path, cur string, data kongfig.ConfigData,
+) error {
+	if len(data) == 0 {
+		buf.WriteString("{}")
+		return nil
+	}
+	inner := cur + p.indent()
+	buf.WriteByte('{')
+	for i, k := range render.OrderedKeys(ctx, path, data) {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		if !p.Compact {
+			buf.WriteString("\n" + inner)
+		}
+		key, err := json.Marshal(k)
+		if err != nil {
+			return err
+		}
+		buf.Write(key)
+		buf.WriteByte(':')
+		if !p.Compact {
+			buf.WriteByte(' ')
+		}
+		child := k
+		if path != "" {
+			child = path + "." + k
+		}
+		if err := p.writeOrderedValue(ctx, buf, child, inner, data[k]); err != nil {
+			return err
+		}
+	}
+	if !p.Compact {
+		buf.WriteString("\n" + cur)
+	}
+	buf.WriteByte('}')
+	return nil
+}
+
+// writeOrderedValue writes one value, recursing into nested objects so their keys
+// are ordered too. Everything else goes through encoding/json at the current
+// indentation, which keeps escaping and number formatting identical to Marshal's.
+func (p Parser) writeOrderedValue(
+	ctx context.Context, buf *bytes.Buffer, path, cur string, v any,
+) error {
+	switch sub := v.(type) {
+	case kongfig.ConfigData:
+		return p.writeOrderedObject(ctx, buf, path, cur, sub)
+	case map[string]any:
+		return p.writeOrderedObject(ctx, buf, path, cur, sub)
+	}
+	var (
+		b   []byte
+		err error
+	)
+	if p.Compact {
+		b, err = json.Marshal(v)
+	} else {
+		b, err = json.MarshalIndent(v, cur, p.indent())
+	}
+	if err != nil {
+		return err
+	}
+	buf.Write(b)
+	return nil
 }
 
 // Format returns the parser's format name for source label composition.
@@ -150,7 +247,7 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 }
 
 func renderMap(ctx context.Context, w io.Writer, data kongfig.ConfigData, prefix string, depth int, opts jsonRenderOpts) error {
-	keys := render.OrderedKeys(ctx, prefix, data)
+	keys := dropEmptyKeys(ctx, prefix, data, render.OrderedKeys(ctx, prefix, data))
 	pad := strings.Repeat(opts.p.indent(), depth)
 
 	for i, k := range keys {
@@ -379,4 +476,47 @@ func skipBlockComment(b []byte, i int) int {
 		i++
 	}
 	return i
+}
+
+// dropEmptyKeys removes the keys the omitempty marks leave out of the output:
+// the ones holding nothing, and the objects whose every key was itself dropped.
+// It runs before the loop that writes the commas, so a dropped last key does not
+// leave the separator that introduced it.
+func dropEmptyKeys(ctx context.Context, prefix string, data kongfig.ConfigData, keys []string) []string {
+	if len(kongfig.OmitEmptyKey.GetAll(ctx)) == 0 {
+		return keys
+	}
+	out := keys[:0:0]
+	for _, k := range keys {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		if render.OmitEmpty(ctx, path, data[k]) {
+			continue
+		}
+		if sub, ok := data[k].(kongfig.ConfigData); ok && !hasRenderableKeys(ctx, path, sub) {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// hasRenderableKeys reports whether anything of sub survives the marks.
+func hasRenderableKeys(ctx context.Context, prefix string, sub kongfig.ConfigData) bool {
+	for k, v := range sub {
+		path := prefix + "." + k
+		if render.OmitEmpty(ctx, path, v) {
+			continue
+		}
+		if nested, ok := v.(kongfig.ConfigData); ok {
+			if hasRenderableKeys(ctx, path, nested) {
+				return true
+			}
+			continue
+		}
+		return true
+	}
+	return false
 }

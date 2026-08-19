@@ -521,6 +521,25 @@ func TestHelpTextPaths_NestedStruct(t *testing.T) {
 	}
 }
 
+func TestHelpTextPaths_StructFieldDescribesItsOwnPath(t *testing.T) {
+	// A namespace is a section in the rendered document, and a section is worth
+	// a line of its own — so the struct field's help text is collected under its
+	// path, not swallowed on the way into the fields below it.
+	type db struct {
+		Host string `kongfig:"host,help='database hostname'"`
+	}
+	type cfg struct {
+		DB db `kongfig:"db,help='where the database lives'"`
+	}
+	got := schema.HelpTextPaths[cfg]()
+	if got["db"] != "where the database lives" {
+		t.Errorf("db help = %q, want 'where the database lives'", got["db"])
+	}
+	if got["db.host"] != "database hostname" {
+		t.Errorf("db.host help = %q, want the nested text to survive too", got["db.host"])
+	}
+}
+
 func TestParseFieldTag_Inline(t *testing.T) {
 	zero, five := 0, 5
 	tests := []struct {
@@ -544,6 +563,51 @@ func TestParseFieldTag_Inline(t *testing.T) {
 				t.Errorf("Inline = %d, want %d", *got, *tc.want)
 			}
 		})
+	}
+}
+
+func TestParseFieldTag_Overflow(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  string
+		want bool
+	}{
+		{name: "absent", tag: "rules,inline", want: false},
+		{name: "present", tag: "rules,overflow", want: true},
+		{name: "alongside inline", tag: "rules,inline=2,overflow", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := schema.ParseFieldTag(tc.tag, "Rules").Overflow; got != tc.want {
+				t.Errorf("Overflow = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInlineTablePaths_OverflowImpliesInline(t *testing.T) {
+	// The tag carries no key count of its own, so a bare overflow mark leaves the
+	// limit at the renderer's default while still marking the path.
+	type rule struct {
+		Match string `kongfig:"match"`
+	}
+	type cfg struct {
+		Rules []rule `kongfig:"rules,overflow"`
+	}
+
+	got := schema.InlineTablePaths[cfg]()
+
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1; got %+v", len(got), got)
+	}
+	if got[0].Path != "rules" {
+		t.Errorf("Path = %q, want rules", got[0].Path)
+	}
+	if !got[0].Overflow {
+		t.Error("Overflow = false, want true")
+	}
+	if got[0].MaxKeys != 0 {
+		t.Errorf("MaxKeys = %d, want 0 (renderer default)", got[0].MaxKeys)
 	}
 }
 
@@ -663,5 +727,67 @@ func TestInlineTablePaths_RecursiveTypeTerminates(t *testing.T) {
 
 	if !slices.Contains(got, "root.name") {
 		t.Errorf("missing root.name; got %v", got)
+	}
+}
+
+// omitempty is written in whichever tag the author already uses for the format,
+// so all three namespaces are read.
+func TestOmitEmptyPaths_ReadsKongfigTOMLAndYAMLTags(t *testing.T) {
+	type cfg struct {
+		A string   `kongfig:"a,omitempty"`
+		C string   `yaml:"c,omitempty"    kongfig:"c"`
+		D string   `kongfig:"d"`
+		B []string `toml:"b,omitempty"    kongfig:"b"`
+	}
+
+	got := schema.OmitEmptyPaths[cfg]()
+
+	for _, want := range []string{"a", "b", "c"} {
+		if !got[want] {
+			t.Errorf("missing %q; got %v", want, got)
+		}
+	}
+	if got["d"] {
+		t.Errorf("untagged field marked; got %v", got)
+	}
+}
+
+// A mark inside a map value or slice element type is reachable, the way inline
+// marks are: map entries take a "*" segment, slice elements share the path.
+func TestOmitEmptyPaths_DescendsIntoElementTypes(t *testing.T) {
+	type rule struct {
+		Org string `kongfig:"org,omitempty"`
+	}
+	type profile struct {
+		Push  string `kongfig:"push,omitempty"`
+		Rules []rule `kongfig:"rules"`
+	}
+	type cfg struct {
+		Profiles map[string]profile `kongfig:"profiles"`
+	}
+
+	got := schema.OmitEmptyPaths[cfg]()
+
+	for _, want := range []string{"profiles.*.push", "profiles.*.rules.org"} {
+		if !got[want] {
+			t.Errorf("missing %q; got %v", want, got)
+		}
+	}
+}
+
+// A struct or map field can itself be dropped when it holds nothing, so the
+// mark names the field, not its entries.
+func TestOmitEmptyPaths_MarksTheFieldNotItsEntries(t *testing.T) {
+	type cfg struct {
+		Labels map[string]string `kongfig:"labels,omitempty"`
+	}
+
+	got := schema.OmitEmptyPaths[cfg]()
+
+	if !got["labels"] {
+		t.Errorf("map field not marked at its own path; got %v", got)
+	}
+	if got["labels.*"] {
+		t.Errorf("map field marked at its entries; got %v", got)
 	}
 }

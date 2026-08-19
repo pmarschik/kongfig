@@ -42,10 +42,14 @@ type FieldTag struct {
 	// Inline marks a table that may be written in a compact one-line form where
 	// the format supports it (TOML inline tables). nil = not marked; 0 = marked,
 	// use the renderer's default key limit; N = marked, at most N direct keys.
-	Inline       *int
-	Default      *string // nil = no default annotation; non-nil = value from default= tag option
-	Name         string
-	Codec        string // from codec=name tag option; empty if not set
+	Inline  *int
+	Default *string // nil = no default annotation; non-nil = value from default= tag option
+	Name    string
+	Codec   string // from codec=name tag option; empty if not set
+	// SortBy names the value inside a map's entries that their order is taken
+	// from, from a sortby= tag option: "priority" ascending, "-priority"
+	// descending, dotted to reach a value one level down. Empty = not marked.
+	SortBy       string
 	Extras       []string
 	Skip         bool
 	Squash       bool
@@ -54,6 +58,10 @@ type FieldTag struct {
 	// terminal, for a value whose shape is worth more than a line that ends
 	// inside the window. It implies Inline.
 	Overflow bool
+	// OmitEmpty leaves the field out of written and rendered output when its
+	// value is empty, the way the option of that name works in the encoding
+	// packages.
+	OmitEmpty bool
 }
 
 // ParseFieldTag parses a kongfig struct tag value.
@@ -63,7 +71,8 @@ type FieldTag struct {
 // Recognized structural options are decoded into typed [FieldTag] fields and do
 // not appear in [FieldTag.Extras]:
 //
-//	squash, redacted, redacted=false, config-path, config-path=N
+//	squash, redacted, redacted=false, config-path, config-path=N, inline,
+//	inline=N, overflow, omitempty, sortby=field, sortby=-field
 //
 // All other options land in Extras verbatim (including quoted values like sep=',').
 // Use [ParseExtraValue] to extract a key=value extra with optional single-quote unquoting.
@@ -90,31 +99,39 @@ func ParseFieldTag(tag, fieldName string) FieldTag {
 
 	ft := FieldTag{Name: name}
 	for _, opt := range splitTagOpts(rest) {
-		switch opt {
-		case "":
-			// empty segment between commas — skip
-		case "squash":
-			ft.Squash = true
-		case "redacted":
-			b := true
-			ft.Redacted = &b
-		case "redacted=false":
-			b := false
-			ft.Redacted = &b
-		case "config-path":
-			ft.IsConfigPath = true
-		case "inline":
-			n := 0
-			ft.Inline = &n
-		case "overflow":
-			ft.Overflow = true
-		default:
-			if !applyPrefixedTagOpt(opt, &ft) {
-				ft.Extras = append(ft.Extras, opt)
-			}
-		}
+		applyTagOpt(opt, &ft)
 	}
 	return ft
+}
+
+// applyTagOpt applies one option from the tag's option list to ft. An option it
+// does not know is kept in Extras, where the caller that defined it can find it.
+func applyTagOpt(opt string, ft *FieldTag) {
+	switch opt {
+	case "":
+		// empty segment between commas — skip
+	case "squash":
+		ft.Squash = true
+	case "redacted":
+		b := true
+		ft.Redacted = &b
+	case "redacted=false":
+		b := false
+		ft.Redacted = &b
+	case "config-path":
+		ft.IsConfigPath = true
+	case "inline":
+		n := 0
+		ft.Inline = &n
+	case "overflow":
+		ft.Overflow = true
+	case "omitempty":
+		ft.OmitEmpty = true
+	default:
+		if !applyPrefixedTagOpt(opt, ft) {
+			ft.Extras = append(ft.Extras, opt)
+		}
+	}
 }
 
 // applyPrefixedTagOpt handles tag options of the form "key=value".
@@ -134,6 +151,10 @@ func applyPrefixedTagOpt(opt string, ft *FieldTag) bool {
 	}
 	if val, ok := strings.CutPrefix(opt, "codec="); ok {
 		ft.Codec = unquoteSingleQuotes(val)
+		return true
+	}
+	if val, ok := strings.CutPrefix(opt, "sortby="); ok {
+		ft.SortBy = val
 		return true
 	}
 	if val, ok := strings.CutPrefix(opt, "inline="); ok {
@@ -411,20 +432,58 @@ func collectFieldOrder(typ reflect.Type, prefix string, out map[string][]string)
 // Map and slice fields are included as their struct-level path (e.g. "labels" for
 // a map[string]string field), so help text is prefix-matched against rendered leaf
 // paths by [kongfig/render.HelpText]. Returns nil when no fields carry a help= extra.
+//
+// A struct field is included under its own path as well as recursed into, so a
+// help= on a namespace describes the section a renderer opens for it. Only the
+// TOML renderer places such a text today, above the table header; a renderer
+// with nowhere to put it leaves it out rather than attaching it to a key.
 func HelpTextPaths[T any]() map[string]string {
 	var out map[string]string
-	walkStructFields(reflect.TypeFor[T](), "", func(field reflect.StructField, path string, _ reflect.Type) {
-		ft := ParseFieldTag(field.Tag.Get("kongfig"), field.Name)
-		help, ok := ParseExtraValue(ft.Extras, "help")
-		if !ok {
-			return
-		}
+	walkNamespacedFields(reflect.TypeFor[T](), "", func(_ reflect.StructField, path, help string) {
 		if out == nil {
 			out = make(map[string]string)
 		}
 		out[path] = help
 	})
 	return out
+}
+
+// walkNamespacedFields calls fn for every field carrying a help= extra, including
+// the struct fields [walkStructFields] passes over on its way into them.
+func walkNamespacedFields(typ reflect.Type, prefix string, fn func(field reflect.StructField, path, help string)) {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct {
+		return
+	}
+	for field := range typ.Fields() {
+		if field.Anonymous {
+			walkNamespacedFields(field.Type, prefix, fn)
+			continue
+		}
+		if !field.IsExported() {
+			continue
+		}
+		ft := ParseFieldTag(field.Tag.Get("kongfig"), field.Name)
+		if ft.Skip {
+			continue
+		}
+		path := ft.Name
+		if prefix != "" {
+			path = prefix + "." + ft.Name
+		}
+		if help, ok := ParseExtraValue(ft.Extras, "help"); ok {
+			fn(field, path, help)
+		}
+		subTyp := field.Type
+		for subTyp.Kind() == reflect.Pointer {
+			subTyp = subTyp.Elem()
+		}
+		if subTyp.Kind() == reflect.Struct {
+			walkNamespacedFields(field.Type, path, fn)
+		}
+	}
 }
 
 // ConfigPaths reflects on T and returns the set of dot-paths whose kongfig tag
@@ -509,9 +568,13 @@ type InlineTableEntry struct {
 	// MaxKeys caps the direct keys an inlined table may hold.
 	// 0 means "use the renderer's default limit".
 	MaxKeys int
+	// Overflow keeps the compact form even when the line does not fit the
+	// terminal, instead of falling back to the format's roomier shape.
+	Overflow bool
 }
 
-// InlineTablePaths collects the paths marked with the inline struct tag option.
+// InlineTablePaths collects the paths marked with the inline struct tag option,
+// and those marked overflow, which implies it.
 //
 // On a struct field the mark applies to that table itself. On a map field it
 // applies to the map's entries, so the returned path ends in a "*" segment. On a
@@ -569,11 +632,93 @@ func walkInlineFields(typ reflect.Type, prefix string, out *[]InlineTableEntry, 
 			path = prefix + "." + ft.Name
 		}
 		marked, elemTyp, elemPrefix := inlineTargets(derefType(field.Type), path)
-		if ft.Inline != nil {
-			*out = append(*out, InlineTableEntry{Path: marked, MaxKeys: *ft.Inline})
+		if ft.Inline != nil || ft.Overflow {
+			maxKeys := 0
+			if ft.Inline != nil {
+				maxKeys = *ft.Inline
+			}
+			*out = append(*out, InlineTableEntry{Path: marked, MaxKeys: maxKeys, Overflow: ft.Overflow})
 		}
 		walkInlineFields(elemTyp, elemPrefix, out, active)
 	}
+}
+
+// OmitEmptyPaths collects the paths of fields marked omitempty, so emitters can
+// leave them out when they hold nothing. The mark is read from the kongfig tag
+// and from the toml and yaml tags, since a field written for one of those
+// encoders usually carries it there:
+//
+//	type Config struct {
+//	    Tags   []string          `kongfig:"tags,omitempty"`
+//	    Labels map[string]string `kongfig:"labels" toml:"labels,omitempty"`
+//	}
+//
+// The mark names the field itself — an empty map is the map that goes away, not
+// its entries. Marks written inside a map value or slice element type are
+// reached the way [InlineTablePaths] reaches them: map entries take a "*"
+// segment, slice elements share the slice's path.
+func OmitEmptyPaths[T any]() map[string]bool {
+	out := make(map[string]bool)
+	walkOmitEmptyFields(reflect.TypeFor[T](), "", out, map[reflect.Type]bool{})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// walkOmitEmptyFields collects the marks on typ's fields and descends into the
+// types they hold. active holds the types on the current path, so a recursive
+// type is entered once rather than forever.
+func walkOmitEmptyFields(typ reflect.Type, prefix string, out map[string]bool, active map[reflect.Type]bool) {
+	typ = derefType(typ)
+	if typ.Kind() != reflect.Struct || active[typ] {
+		return
+	}
+	active[typ] = true
+	defer delete(active, typ)
+
+	for field := range typ.Fields() {
+		if field.Anonymous {
+			walkOmitEmptyFields(field.Type, prefix, out, active)
+			continue
+		}
+		if !field.IsExported() {
+			continue
+		}
+		ft := ParseFieldTag(field.Tag.Get("kongfig"), field.Name)
+		if ft.Skip {
+			continue
+		}
+		path := ft.Name
+		if prefix != "" {
+			path = prefix + "." + ft.Name
+		}
+		if ft.OmitEmpty || encoderTagOmitsEmpty(field, "toml") || encoderTagOmitsEmpty(field, "yaml") {
+			out[path] = true
+		}
+		_, elemTyp, elemPrefix := inlineTargets(derefType(field.Type), path)
+		walkOmitEmptyFields(elemTyp, elemPrefix, out, active)
+	}
+}
+
+// encoderTagOmitsEmpty reports whether the named encoder tag carries omitempty.
+// Only the option list is read; the name in those tags belongs to that encoder,
+// while kongfig paths come from the kongfig tag.
+func encoderTagOmitsEmpty(field reflect.StructField, tag string) bool {
+	value, ok := field.Tag.Lookup(tag)
+	if !ok {
+		return false
+	}
+	_, opts, found := strings.Cut(value, ",")
+	if !found {
+		return false
+	}
+	for opt := range strings.SplitSeq(opts, ",") {
+		if strings.TrimSpace(opt) == "omitempty" {
+			return true
+		}
+	}
+	return false
 }
 
 // inlineTargets works out, for a field of type typ living at path, which path an

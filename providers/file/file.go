@@ -13,11 +13,12 @@ import (
 
 // Provider loads a config file using a Parser.
 type Provider struct {
-	parser       kongfig.Parser
-	lastKeyOrder map[string][]string
-	path         string
-	source       string
-	displayPath  string
+	parser        kongfig.Parser
+	lastKeyOrder  map[string][]string
+	lastPositions map[string]kongfig.SourcePosition
+	path          string
+	source        string
+	displayPath   string
 }
 
 // New returns a Provider (and ByteProvider) that loads the file at path using parser.
@@ -41,6 +42,10 @@ func (p *Provider) ProviderInfo() kongfig.ProviderInfo {
 
 // SourceData carries file path information for source annotation rendering.
 type SourceData struct {
+	// Positions maps a config dot-path to its position in the file, as
+	// captured by a [kongfig.DocumentParser] during the last Load.
+	// Nil when the parser reports no positions.
+	Positions   map[string]kongfig.SourcePosition
 	Path        string // canonical absolute path
 	DisplayPath string // optional human-readable path (e.g. "$XDG_CONFIG_HOME/app/config.yaml")
 }
@@ -56,13 +61,24 @@ func (d SourceData) RenderAnnotation(ctx context.Context, s kongfig.Styler, _ st
 	return s.SourceData(path)
 }
 
+// PositionOf returns the position of path in this file, or nil when the parser
+// reported no position for it. Implements [kongfig.PositionSupport], so callers
+// reach it through [kongfig.LayerMeta.PositionOf].
+func (d SourceData) PositionOf(path string) *kongfig.SourcePosition {
+	pos, ok := d.Positions[path]
+	if !ok {
+		return nil
+	}
+	return &pos
+}
+
 // ProviderData implements [kongfig.ProviderDataSupport].
 // Returns nil for empty no-op providers (no path).
 func (p *Provider) ProviderData() kongfig.ProviderData {
 	if p.path == "" {
 		return nil
 	}
-	return SourceData{Path: p.path, DisplayPath: p.displayPath}
+	return SourceData{Path: p.path, DisplayPath: p.displayPath, Positions: p.lastPositions}
 }
 
 // Parser returns the parser used by this provider. Implements [kongfig.ParserProvider]
@@ -89,9 +105,20 @@ func (p *Provider) Load(ctx context.Context) (kongfig.ConfigData, error) {
 		return nil, err
 	}
 	if len(b) == 0 {
-		p.lastKeyOrder = nil
+		p.lastKeyOrder, p.lastPositions = nil, nil
 		return kongfig.ConfigData{}, nil
 	}
+	// DocumentParser subsumes KeyOrderParser: one parse yields both.
+	if dp, ok := p.parser.(kongfig.DocumentParser); ok {
+		data, meta, parseErr := dp.UnmarshalDocument(b)
+		if parseErr != nil {
+			return nil, fmt.Errorf("file provider: parse %s: %w", p.path, parseErr)
+		}
+		p.lastKeyOrder = meta.KeyOrder
+		p.lastPositions = p.stampPositions(meta.Positions)
+		return data, nil
+	}
+	p.lastPositions = nil
 	if kop, ok := p.parser.(kongfig.KeyOrderParser); ok {
 		data, order, parseErr := kop.UnmarshalWithKeyOrder(b)
 		if parseErr != nil {
@@ -106,6 +133,20 @@ func (p *Provider) Load(ctx context.Context) (kongfig.ConfigData, error) {
 		return nil, fmt.Errorf("file provider: parse %s: %w", p.path, err)
 	}
 	return data, nil
+}
+
+// stampPositions fills in the file name a parser cannot know. It always uses the
+// canonical path, never DisplayPath, so the result stays openable by an editor.
+func (p *Provider) stampPositions(positions map[string]kongfig.SourcePosition) map[string]kongfig.SourcePosition {
+	if len(positions) == 0 {
+		return nil
+	}
+	out := make(map[string]kongfig.SourcePosition, len(positions))
+	for path, pos := range positions {
+		pos.File = p.path
+		out[path] = pos
+	}
+	return out
 }
 
 // KeyOrder returns the key insertion order captured during the most recent Load call.

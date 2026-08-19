@@ -336,6 +336,10 @@ loading; optionally fire validators on each `Load()` via `WithValidateOnLoad`. C
 helpers (`ExactlyOneOf`, `AllOrNone`, `RequiredWith`, …) cover common multi-field
 constraints.
 
+Violations carry provenance: `PathSource.Position()` reports the `file:line:col` a rejected
+value came from, so error messages can point at the offending line. Positions come from the
+parser — YAML reports them, TOML does not — and are `nil` for env, flag and default layers.
+
 See [docs/validation.md](docs/validation.md) for the full reference.
 
 ## CLI integration

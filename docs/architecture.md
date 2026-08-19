@@ -154,6 +154,30 @@ contract:
 - `ctx` carries the `SourceID` (via `SourceIDFromCtx`) so the implementation can look up
   field names from the `PathFieldNames` injected by `Kongfig.RenderWith`.
 
+### Source positions
+
+`ProviderData` implementations backed by a text document may also implement the optional
+`PositionSupport` extension:
+
+```go
+type PositionSupport interface {
+    PositionOf(path string) *SourcePosition   // nil when unknown
+}
+```
+
+`LayerMeta.PositionOf(path)` delegates to it and returns `nil` for layers with no document
+(env, flags, defaults) or no recorded position. `SourcePosition{File, Line, Col}` prints as
+`config.yaml:42:8`, dropping unknown trailing components.
+
+The positions themselves come from the parser: `file.Provider` prefers a
+`DocumentParser` over `KeyOrderParser` during `Load`, stamps the file path onto each
+position, and hands them to `SourceData`. See
+[implementing-parsers.md](implementing-parsers.md#source-positions-documentparser). YAML
+supports this; TOML does not, because `BurntSushi/toml` keeps key positions unexported.
+
+Validation reads them back through `PathSource.Position()` — see
+[validation.md](validation.md#source-positions).
+
 ### render.Value — mandatory helper for new renderers
 
 `RenderedValue` is a wrapper placed over every leaf by `prepareRender`. Renderers must not call `s.String(...)` or `s.Number(...)` directly on leaf values — they must call:

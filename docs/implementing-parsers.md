@@ -19,6 +19,7 @@ Every parser **should** also implement:
 | Interface                | Method                                                                   | Purpose                                                                             |
 | ------------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
 | `kongfig.KeyOrderParser` | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)` | Preserve document key order for `--layers` rendering via `file.Provider.KeyOrder()` |
+| `kongfig.DocumentParser` | `UnmarshalDocument([]byte) (ConfigData, DocumentMeta, error)`            | Key order **and** per-path source positions from a single parse                     |
 
 Without `KeyOrderParser`, layers mode falls back to struct field order (from `NewFor[T]`) or
 alphabetical. Implement it if your format's text encoding has a meaningful key order.
@@ -31,7 +32,43 @@ var (
     _ kongfig.ParserNamer     = Parser{}
     _ kongfig.OutputProvider  = Parser{}
     _ kongfig.KeyOrderParser  = Parser{}
+    _ kongfig.DocumentParser  = Parser{}
 )
+```
+
+### Source positions (`DocumentParser`)
+
+`DocumentParser` supersedes `KeyOrderParser`: `DocumentMeta` carries `KeyOrder` **and**
+`Positions` (dot-path → `kongfig.SourcePosition`), so a parser that can report both parses
+once. `file.Provider` prefers `DocumentParser` and falls back to `KeyOrderParser`, then to
+plain `Unmarshal`. Keep `UnmarshalWithKeyOrder` for API compatibility and delegate:
+
+```go
+func (p Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]string, error) {
+    data, meta, err := p.UnmarshalDocument(b)
+    return data, meta.KeyOrder, err
+}
+```
+
+Two rules for `Positions`:
+
+- **Record the value's position, not the key's.** That is where a rejected value sits; for
+  a nested table the value position is its first key.
+- **Leave `SourcePosition.File` empty.** A parser only sees bytes; `file.Provider` stamps
+  the canonical file path onto every position after parsing.
+
+Only formats whose decoder exposes per-key positions can implement this. `gopkg.in/yaml.v3`
+does (`yaml.Node.Line`/`.Column`); `github.com/BurntSushi/toml` does not — it keeps key
+positions unexported and surfaces them only inside a `ParseError`.
+
+Consumers read positions back through the layer, never through the parser:
+
+```go
+if src, ok := kf.SourceFor("db.port"); ok {
+    if pos := src.Layer.PositionOf("db.port"); pos != nil {
+        fmt.Println(pos) // /etc/app/config.yaml:3:9
+    }
+}
 ```
 
 ## Renderer checklist

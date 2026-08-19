@@ -314,6 +314,30 @@ func (d *Diagnostics) Err() error
 - `Err()` is nil-safe: `(*Diagnostics)(nil).Err()` returns `nil`.
 - `LoadViolations` links each violation set to the `kongfig.Layer` that triggered it.
 
+### Source positions
+
+Every `Violation` carries `Paths []PathSource`, and each `PathSource` pairs the config path
+with the layer that last wrote it. `PathSource.Position()` returns where that path sits in
+its source document, or `nil` when the position is unavailable — no provenance, a source
+with no document (env, flags, defaults), or a parser that does not report positions
+(see [architecture.md](architecture.md#source-positions)).
+
+```go
+for _, v := range diags.Violations {
+    for _, ps := range v.Paths {
+        msg := ps.Path + ": " + v.Message
+        if pos := ps.Position(); pos != nil {
+            msg += " (" + pos.String() + ")" // db.host: required (/etc/app/config.yaml:42:8)
+        }
+        fmt.Println(msg)
+    }
+}
+```
+
+Positions point at the **value**, which is where a rejected value sits. `Diagnostics.Err()`
+does not include them — its message format is unchanged; format your own message when you
+want the file/line/column.
+
 ### Severity
 
 | Level             | `Err()` non-nil | Meaning                          |

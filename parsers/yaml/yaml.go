@@ -23,6 +23,8 @@ var (
 	_ kongfig.Parser         = Parser{}
 	_ kongfig.ParserNamer    = Parser{}
 	_ kongfig.OutputProvider = Parser{}
+	_ kongfig.KeyOrderParser = Parser{}
+	_ kongfig.DocumentParser = Parser{}
 )
 
 // Unmarshal decodes YAML bytes into a map.
@@ -36,36 +38,52 @@ func (Parser) Unmarshal(b []byte) (kongfig.ConfigData, error) {
 
 // UnmarshalWithKeyOrder decodes YAML bytes and also returns the key insertion order
 // per parent path, as observed in the document. Implements [kongfig.KeyOrderParser].
-func (Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]string, error) {
+func (p Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]string, error) {
+	data, meta, err := p.UnmarshalDocument(b)
+	return data, meta.KeyOrder, err
+}
+
+// UnmarshalDocument decodes YAML bytes and also returns the key insertion order
+// per parent path and the position of every value in the document.
+// Implements [kongfig.DocumentParser].
+//
+// Positions carry no file name: the parser only sees bytes, so
+// [kongfig.SourcePosition.File] is left for the provider to fill in.
+func (Parser) UnmarshalDocument(b []byte) (kongfig.ConfigData, kongfig.DocumentMeta, error) {
 	var node goyaml.Node
 	if err := goyaml.Unmarshal(b, &node); err != nil {
-		return nil, nil, err
+		return nil, kongfig.DocumentMeta{}, err
 	}
 	// yaml.v3 wraps the document in a document node; the actual content is node.Content[0].
 	if node.Kind != goyaml.DocumentNode || len(node.Content) == 0 {
-		return kongfig.ConfigData{}, nil, nil
+		return kongfig.ConfigData{}, kongfig.DocumentMeta{}, nil
 	}
 	root := node.Content[0]
 	if root.Kind != goyaml.MappingNode {
-		// Non-map root (scalar, sequence): no key order to extract.
+		// Non-map root (scalar, sequence): no keys to walk.
 		var out map[string]any
 		if err := node.Decode(&out); err != nil {
-			return nil, nil, err
+			return nil, kongfig.DocumentMeta{}, err
 		}
-		return kongfig.ToConfigData(out), nil, nil
+		return kongfig.ToConfigData(out), kongfig.DocumentMeta{}, nil
 	}
 	var out map[string]any
 	if err := root.Decode(&out); err != nil {
-		return nil, nil, err
+		return nil, kongfig.DocumentMeta{}, err
 	}
-	keyOrder := make(map[string][]string)
-	collectYAMLKeyOrder(root, "", keyOrder)
-	return kongfig.ToConfigData(out), keyOrder, nil
+	meta := kongfig.DocumentMeta{
+		KeyOrder:  make(map[string][]string),
+		Positions: make(map[string]kongfig.SourcePosition),
+	}
+	collectYAMLDocumentMeta(root, "", meta)
+	return kongfig.ToConfigData(out), meta, nil
 }
 
-// collectYAMLKeyOrder walks a YAML mapping node and records key insertion order
-// per parent path into out.
-func collectYAMLKeyOrder(node *goyaml.Node, prefix string, out map[string][]string) {
+// collectYAMLDocumentMeta walks a YAML mapping node and records, per parent path,
+// the key insertion order and, per config path, the position of the value node.
+// The value position is used rather than the key's because that is where a
+// rejected value actually sits; for a nested mapping it is that mapping's first key.
+func collectYAMLDocumentMeta(node *goyaml.Node, prefix string, meta kongfig.DocumentMeta) {
 	if node.Kind != goyaml.MappingNode {
 		return
 	}
@@ -74,13 +92,16 @@ func collectYAMLKeyOrder(node *goyaml.Node, prefix string, out map[string][]stri
 		keyNode := node.Content[i]
 		valNode := node.Content[i+1]
 		key := keyNode.Value
-		out[prefix] = append(out[prefix], key)
+		meta.KeyOrder[prefix] = append(meta.KeyOrder[prefix], key)
+
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		meta.Positions[path] = kongfig.SourcePosition{Line: valNode.Line, Col: valNode.Column}
+
 		if valNode.Kind == goyaml.MappingNode {
-			childPath := key
-			if prefix != "" {
-				childPath = prefix + "." + key
-			}
-			collectYAMLKeyOrder(valNode, childPath, out)
+			collectYAMLDocumentMeta(valNode, path, meta)
 		}
 	}
 }

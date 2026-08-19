@@ -16,6 +16,22 @@ It is updated on every `mergeInto` call (i.e. on every `Load`). The last writer 
 
 `k.Provenance()` returns a snapshot copy safe for concurrent use.
 
+## Where a path was written
+
+Provenance names the layer; for file-backed layers it can also give the exact spot:
+
+```go
+if src, ok := k.SourceFor("db.port"); ok {
+    if pos := src.Layer.PositionOf("db.port"); pos != nil {
+        fmt.Println(pos) // /etc/app/config.yaml:3:9
+    }
+}
+```
+
+`PositionOf` returns `nil` for layers with no document (env, flags, defaults) and for
+parsers that report no positions — YAML does, TOML does not. See
+[architecture.md](architecture.md#source-positions).
+
 ## Derived values
 
 `KindDerived = "derived"` is a source kind constant for layers that represent computed

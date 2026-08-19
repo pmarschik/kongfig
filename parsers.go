@@ -30,6 +30,29 @@ type KeyOrderParser interface {
 	UnmarshalWithKeyOrder([]byte) (data ConfigData, keyOrder map[string][]string, err error)
 }
 
+// DocumentMeta carries the metadata a [DocumentParser] reports alongside the
+// decoded data. Both maps may be nil when the parser has nothing to report.
+type DocumentMeta struct {
+	// KeyOrder maps a parent dot-path ("" for the document root) to that
+	// parent's keys in document order, as in [KeyOrderParser].
+	KeyOrder map[string][]string
+	// Positions maps a config dot-path to where its value starts in the
+	// document. Parsers leave [SourcePosition.File] empty — only the provider
+	// knows the document's path, and it fills the field in after parsing.
+	Positions map[string]SourcePosition
+}
+
+// DocumentParser is an optional interface a [Parser] can implement to report
+// document metadata (key order and source positions) from a single parse.
+// [providers/file.Provider] prefers it over [KeyOrderParser] during
+// [Provider.Load] and exposes the positions through [LayerMeta.PositionOf].
+//
+// Implementing DocumentParser subsumes [KeyOrderParser]; a parser that reports
+// both should implement DocumentParser and delegate UnmarshalWithKeyOrder to it.
+type DocumentParser interface {
+	UnmarshalDocument([]byte) (data ConfigData, meta DocumentMeta, err error)
+}
+
 // KeyOrderProvider is an optional interface a [Provider] can implement to report
 // the key insertion order captured during its most recent [Provider.Load] call.
 // [Kongfig.Load] checks for this interface after loading and stores the result in

@@ -1,0 +1,379 @@
+package toml
+
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+
+	kongfig "github.com/pmarschik/kongfig"
+)
+
+// EditDocument rewrites src so it holds want, touching only the text the data
+// change touches: comments, key order, indentation and the layout choices the
+// author made stay as they are. It implements [kongfig.DocumentEditor]; call it
+// through [kongfig.EditDocument] to have the result checked against want.
+//
+// want is the whole document, not a patch — a key it does not mention is a key
+// the rewrite removes.
+//
+// A change TOML cannot express as an edit of *this* document is refused rather
+// than guessed at, and the document is left alone. What it refuses:
+//
+//   - a new key whose value is a table or a list of tables, which would need a
+//     section the document does not have
+//   - a new element for a list of tables written as [[header]] blocks
+//   - a new key in a table the document only names in a dotted key
+//
+// The caller can fall back to [Parser.Marshal] and accept a reformatted file.
+func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error) {
+	got, err := p.Unmarshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("toml: read the document to edit: %w", err)
+	}
+	root, err := scanDocument(src)
+	if err != nil {
+		return nil, err
+	}
+	e := &docEditor{src: src}
+	if err := e.table(root, got, want, ""); err != nil {
+		return nil, err
+	}
+	return e.apply()
+}
+
+// ErrCannotEdit reports a change TOML cannot express as an edit of the document
+// it was handed, so the document was left alone.
+var ErrCannotEdit = errors.New("toml: cannot express that as an edit of this document")
+
+func cannotEdit(path, why string) error {
+	if path == "" {
+		path = "the document root"
+	}
+	return fmt.Errorf("%w: %s: %s", ErrCannotEdit, path, why)
+}
+
+// docEdit replaces the bytes of at with text; an empty span inserts, empty text
+// deletes.
+type docEdit struct {
+	text string
+	at   span
+}
+
+// docEditor collects the edits a data change implies and splices them in at the
+// end, so a refusal anywhere leaves the document untouched.
+type docEditor struct {
+	src   []byte
+	edits []docEdit
+}
+
+func (e *docEditor) replace(at span, text string) {
+	e.edits = append(e.edits, docEdit{at: at, text: text})
+}
+
+func (e *docEditor) insert(at int, text string) {
+	e.edits = append(e.edits, docEdit{at: span{start: at, end: at}, text: text})
+}
+
+func (e *docEditor) remove(at span) {
+	e.edits = append(e.edits, docEdit{at: at})
+}
+
+// apply splices the edits in from the back, so each one's offsets still refer to
+// the document it was measured against.
+func (e *docEditor) apply() ([]byte, error) {
+	if len(e.edits) == 0 {
+		return slices.Clone(e.src), nil
+	}
+	edits := slices.Clone(e.edits)
+	slices.SortStableFunc(edits, func(a, b docEdit) int { return b.at.start - a.at.start })
+	out := slices.Clone(e.src)
+	prev := len(e.src)
+	for _, ed := range edits {
+		if ed.at.end > prev {
+			// Two edits over the same bytes would each rewrite what the other
+			// read; refusing is the only safe answer.
+			return nil, fmt.Errorf("%w: two changes over the same text", ErrCannotEdit)
+		}
+		out = slices.Concat(out[:ed.at.start], []byte(ed.text), out[ed.at.end:])
+		prev = ed.at.start
+	}
+	return out, nil
+}
+
+// value edits the text of one value so it holds want. It is the entry point for
+// every node: unchanged values are left alone, which is what keeps the spelling
+// the author chose.
+func (e *docEditor) value(node *docNode, got, want any, path string) error {
+	if kongfig.EqualValues(got, want) {
+		return nil
+	}
+	if wm, ok := wantTable(want); ok {
+		return e.table(node, got, wm, path)
+	}
+	if ws, ok := wantList(want); ok {
+		return e.list(node, got, ws, path)
+	}
+	return e.rewrite(node, want, path)
+}
+
+// rewrite replaces a whole value with the text for want, which only works for a
+// value the document spells out in place — a [header] block has no such text.
+func (e *docEditor) rewrite(node *docNode, want any, path string) error {
+	if node == nil || node.value.empty() {
+		return cannotEdit(path, "there is no value to rewrite")
+	}
+	e.replace(node.value, tomlValue(want))
+	return nil
+}
+
+// table edits a table key by key: values that changed, keys want added, keys want
+// dropped. Keys it does not mention that the document has are removed, since want
+// is the whole document.
+func (e *docEditor) table(node *docNode, got any, want map[string]any, path string) error {
+	if node == nil || node.kind != nodeTable {
+		return e.rewrite(node, want, path)
+	}
+	gotMap, _ := wantTable(got)
+	for _, key := range sortedKeys(want) {
+		child, ok := node.children[key]
+		if !ok {
+			if err := e.insertKey(node, key, want[key], path); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := e.value(child, gotMap[key], want[key], joinPath(path, key)); err != nil {
+			return err
+		}
+	}
+	for _, key := range node.order {
+		if _, wanted := want[key]; wanted {
+			continue
+		}
+		if err := e.removeChild(node, key, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertKey writes a key the document does not have yet, in the layout of the
+// table it joins: on a line of its own after the keys already there, or before
+// the closing brace of an inline table.
+func (e *docEditor) insertKey(node *docNode, key string, value any, path string) error {
+	at := joinPath(path, key)
+	if !node.canInsert {
+		return cannotEdit(at, "there is no place in the document to write it")
+	}
+	if node.inline {
+		text := tomlKey(key) + " = " + tomlValue(value)
+		if len(node.order) > 0 {
+			text = ", " + text
+		}
+		e.insert(node.insertAt, text)
+		return nil
+	}
+	if needsSection(value) {
+		return cannotEdit(at, "its value needs a section the document does not have")
+	}
+	e.insert(node.insertAt, node.indent+tomlKey(key)+" = "+tomlValue(value)+"\n")
+	return nil
+}
+
+// removeChild takes out the text that writes one key: its line, its section, or
+// its pair inside an inline table.
+func (e *docEditor) removeChild(node *docNode, key, path string) error {
+	child := node.children[key]
+	if child == nil || child.del.empty() {
+		return cannotEdit(joinPath(path, key), "there is no text to remove")
+	}
+	at := child.del
+	if node.inline {
+		at = e.withSeparator(at)
+	}
+	e.remove(at)
+	return nil
+}
+
+// list edits a list element by element. Elements the document already has keep
+// their place and their layout; extra ones are appended and surplus ones dropped
+// from the end.
+func (e *docEditor) list(node *docNode, got any, want []any, path string) error {
+	if node == nil || (node.kind != nodeArray && node.kind != nodeTableArray) {
+		return e.rewrite(node, want, path)
+	}
+	gotList, _ := wantList(got)
+	shared := min(len(node.elems), len(want))
+	for i := range shared {
+		var gotElem any
+		if i < len(gotList) {
+			gotElem = gotList[i]
+		}
+		if err := e.value(node.elems[i], gotElem, want[i], joinIndex(path, i)); err != nil {
+			return err
+		}
+	}
+	for i := len(want); i < len(node.elems); i++ {
+		if err := e.removeElem(node, node.elems[i], joinIndex(path, i)); err != nil {
+			return err
+		}
+	}
+	if len(want) > len(node.elems) {
+		return e.appendElems(node, want[len(node.elems):], path)
+	}
+	return nil
+}
+
+// appendElems adds elements to a list, in the layout the list already uses: one
+// per line for a list written across lines, after the last element for one on a
+// single line. All of them go in as one insertion, so they keep their order.
+func (e *docEditor) appendElems(node *docNode, values []any, path string) error {
+	if node.kind != nodeArray {
+		return cannotEdit(path, "a list of sections takes no new element")
+	}
+	var text strings.Builder
+	for i, v := range values {
+		switch {
+		case node.multiline:
+			if i == 0 && !node.comma && len(node.elems) > 0 {
+				text.WriteString(",")
+			}
+			text.WriteString("\n" + node.indent + tomlValue(v) + ",")
+		case len(node.elems) == 0 && i == 0:
+			text.WriteString(tomlValue(v))
+		default:
+			text.WriteString(", " + tomlValue(v))
+		}
+	}
+	e.insert(node.insertAt, text.String())
+	return nil
+}
+
+// removeElem takes an element out of a list: its whole line in a list written
+// across lines, otherwise the element and the separator that follows it.
+func (e *docEditor) removeElem(node, elem *docNode, path string) error {
+	if elem.del.empty() {
+		return cannotEdit(path, "there is no text to remove")
+	}
+	if node.kind == nodeTableArray {
+		e.remove(elem.del)
+		return nil
+	}
+	if node.multiline {
+		e.remove(e.wholeLines(elem.del))
+		return nil
+	}
+	e.remove(e.withSeparator(elem.del))
+	return nil
+}
+
+// wholeLines widens a span to the lines it sits on, for text that has a line to
+// itself.
+func (e *docEditor) wholeLines(at span) span {
+	start := lineStartOf(e.src, at.start)
+	end := at.end
+	for end < len(e.src) && e.src[end] != '\n' {
+		end++
+	}
+	if end < len(e.src) {
+		end++
+	}
+	return span{start: start, end: end}
+}
+
+// withSeparator widens a span to the comma that separates it from the next item,
+// or, for the last item, to the one that separates it from the previous.
+func (e *docEditor) withSeparator(at span) span {
+	end := at.end
+	for end < len(e.src) && isInlineSpace(e.src[end]) {
+		end++
+	}
+	if end < len(e.src) && e.src[end] == ',' {
+		end++
+		for end < len(e.src) && isInlineSpace(e.src[end]) {
+			end++
+		}
+		return span{start: at.start, end: end}
+	}
+	start := at.start
+	for start > 0 && isInlineSpace(e.src[start-1]) {
+		start--
+	}
+	if start > 0 && e.src[start-1] == ',' {
+		start--
+	}
+	return span{start: start, end: at.end}
+}
+
+// needsSection reports whether a value can only be written as a section — a
+// table, or a list with a table in it. Written as a new key line it would change
+// the shape of the document rather than a value in it.
+func needsSection(v any) bool {
+	if _, isTable := wantTable(v); isTable {
+		return true
+	}
+	list, isList := wantList(v)
+	if !isList {
+		return false
+	}
+	for _, elem := range list {
+		if _, isTable := wantTable(elem); isTable {
+			return true
+		}
+	}
+	return false
+}
+
+// wantTable views a value as a table when it is one.
+func wantTable(v any) (map[string]any, bool) {
+	switch m := v.(type) {
+	case kongfig.ConfigData:
+		return m, true
+	case map[string]any:
+		return m, true
+	default:
+		return nil, false
+	}
+}
+
+// wantList views a value as a list when it is one. A string is not a list.
+func wantList(v any) ([]any, bool) {
+	if _, isString := v.(string); isString {
+		return nil, false
+	}
+	switch s := v.(type) {
+	case []any:
+		return s, true
+	case nil:
+		return nil, false
+	default:
+		if list := toTOMLSlice(v); list != nil {
+			return list, true
+		}
+		return nil, false
+	}
+}
+
+// sortedKeys walks a table in a fixed order, so what a refused edit reports does
+// not depend on Go's map order.
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func joinPath(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
+}
+
+func joinIndex(prefix string, i int) string {
+	return joinPath(prefix, strconv.Itoa(i))
+}

@@ -77,6 +77,7 @@ var (
 	_ kongfig.OutputProvider = Parser{}
 	_ kongfig.KeyOrderParser = Parser{}
 	_ kongfig.CtxMarshaler   = Parser{}
+	_ kongfig.DocumentEditor = Parser{}
 )
 
 // Unmarshal decodes TOML bytes into a map.

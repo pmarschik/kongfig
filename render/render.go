@@ -31,6 +31,17 @@ import (
 // Then wrap the render call with [AlignAnnotations].
 const AnnMarker = "\x00"
 
+// AnnMarkerFixed is [AnnMarker] for a line whose annotation must stay on it,
+// because the line above is not a place a comment may go. The line that closes a
+// folded TOML multi-line string is one: a comment written above it lands inside
+// the string, and the value the reader gets back is not the value that was
+// rendered.
+//
+// A fixed annotation aligns with the others when the alignment column has room
+// for it, and follows its content directly when it does not. It is never lifted
+// to a line of its own.
+const AnnMarkerFixed = "\x01"
+
 // ansiRe strips ANSI escape codes for visual-width measurement.
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
@@ -62,13 +73,16 @@ type annEntry struct {
 	ann     string
 	vw      int
 	annVW   int
+	// fixed is set by [AnnMarkerFixed]: the annotation stays on this line, at the
+	// alignment column when it fits there and against its content when it does not.
+	fixed bool
 }
 
 func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
 	parsed := parseAnnEntries(lines)
 	above := computeAboveFlags(parsed, cols)
-	maxInlineVW, maxAnnVW := computeAlignWidths(parsed, above)
+	maxInlineVW, maxAnnVW := computeAlignWidths(parsed, above, cols)
 
 	// Push annotations to the right edge when the terminal is wide enough.
 	alignCol := maxInlineVW + 1
@@ -86,6 +100,9 @@ func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 			indent := leadingWhitespace(e.content)
 			_, _ = fmt.Fprintln(w, indent+strings.TrimLeft(e.ann, " "))
 			_, _ = fmt.Fprintln(w, e.content)
+		case e.fixed && (alignCol <= e.vw || (cols > 0 && alignCol+e.annVW > cols)):
+			// No room at the column the others align on, and nowhere else to go.
+			_, _ = fmt.Fprintln(w, e.content+e.ann)
 		default:
 			_, _ = fmt.Fprintln(w, e.content+strings.Repeat(" ", alignCol-e.vw)+e.ann)
 		}
@@ -96,10 +113,11 @@ func writeAlignedAnnotations(raw string, w io.Writer, cols int) error {
 func parseAnnEntries(lines []string) []annEntry {
 	parsed := make([]annEntry, len(lines))
 	for i, line := range lines {
-		parts := strings.SplitN(line, AnnMarker, 2)
-		e := annEntry{content: parts[0]}
-		if len(parts) == 2 {
-			e.ann = parts[1]
+		e := annEntry{content: line}
+		if content, ann, ok := strings.Cut(line, AnnMarker); ok {
+			e.content, e.ann = content, ann
+		} else if content, ann, ok := strings.Cut(line, AnnMarkerFixed); ok {
+			e.content, e.ann, e.fixed = content, ann, true
 		}
 		e.vw = VisualWidth(e.content)
 		if e.ann != "" {
@@ -110,44 +128,100 @@ func parseAnnEntries(lines []string) []annEntry {
 	return parsed
 }
 
+// aligns reports whether the entry has a say in where the annotations align: it
+// carries one, and the aligner is free to move it.
+func (e annEntry) aligns() bool { return e.ann != "" && !e.fixed }
+
 // computeAboveFlags decides, for each annotated line, whether the annotation
 // should appear above (true) or inline (false). A line goes above when it alone
-// would overflow the terminal, or when alignment padding would push it over.
+// would overflow the terminal, or when it cannot be annotated at the column the
+// rest of the document aligns on.
 func computeAboveFlags(parsed []annEntry, cols int) []bool {
 	above := make([]bool, len(parsed))
+	if cols <= 0 {
+		return above
+	}
+	// A line whose own content and annotation already overflow can never be
+	// inline, whatever column the others pick.
 	for i, e := range parsed {
-		if e.ann != "" {
-			above[i] = cols > 0 && e.vw+1+e.annVW > cols
+		if e.aligns() {
+			above[i] = e.vw+1+e.annVW > cols
 		}
 	}
-	// Max content width among currently-inline lines (tentative alignment target).
-	maxInlineVW := 0
+	// Every annotation aligns on one column, so that column has to clear the
+	// widest content and still leave room for the widest annotation. When no
+	// column does both, the lines that lose their annotation to a line of its own
+	// are the ones that cost the fewest: pick the column that keeps the most
+	// inline, rather than letting one over-wide line evict all the others.
+	col := bestAlignCol(parsed, above, cols)
 	for i, e := range parsed {
-		if e.ann != "" && !above[i] && e.vw > maxInlineVW {
-			maxInlineVW = e.vw
-		}
-	}
-	// Re-check: alignment padding may push additional lines over the limit.
-	for i, e := range parsed {
-		if e.ann == "" || above[i] {
+		if !e.aligns() || above[i] {
 			continue
 		}
-		if cols > 0 && maxInlineVW+1+e.annVW > cols {
-			above[i] = true
-		}
+		above[i] = e.vw >= col || col+e.annVW > cols
 	}
 	return above
 }
 
-func computeAlignWidths(parsed []annEntry, above []bool) (maxInlineVW, maxAnnVW int) {
+// bestAlignCol picks the column the annotations align on: the one that leaves the
+// most of them inline, and the leftmost of those, which keeps a wide outlier's
+// annotation above rather than a whole document's. Only a column just past some
+// line's content is worth trying — between two of those the same lines fit.
+func bestAlignCol(parsed []annEntry, above []bool, cols int) int {
+	var cands []int
+	seen := make(map[int]bool)
 	for i, e := range parsed {
-		if e.ann != "" && !above[i] {
+		if !e.aligns() || above[i] || seen[e.vw+1] {
+			continue
+		}
+		seen[e.vw+1] = true
+		cands = append(cands, e.vw+1)
+	}
+	sort.Ints(cands)
+
+	best, bestFit := 0, -1
+	for _, col := range cands {
+		if fit := countInline(parsed, above, cols, col); fit > bestFit {
+			best, bestFit = col, fit
+		}
+	}
+	return best
+}
+
+// countInline reports how many annotations stay inline when they align on col.
+func countInline(parsed []annEntry, above []bool, cols, col int) int {
+	fit := 0
+	for i, e := range parsed {
+		if !e.aligns() || above[i] {
+			continue
+		}
+		if e.vw < col && col+e.annVW <= cols {
+			fit++
+		}
+	}
+	return fit
+}
+
+func computeAlignWidths(parsed []annEntry, above []bool, cols int) (maxInlineVW, maxAnnVW int) {
+	for i, e := range parsed {
+		if e.aligns() && !above[i] {
 			if e.vw > maxInlineVW {
 				maxInlineVW = e.vw
 			}
 			if e.annVW > maxAnnVW {
 				maxAnnVW = e.annVW
 			}
+		}
+	}
+	// A pinned annotation is inline whatever happens, so the column leaves room
+	// for it too — but only when it can reach the column at all. One too wide for
+	// that sits against its own content, and the rest need not shift for it.
+	for _, e := range parsed {
+		if e.ann == "" || !e.fixed || e.annVW <= maxAnnVW {
+			continue
+		}
+		if cols <= 0 || (e.vw+1+e.annVW <= cols && maxInlineVW+1+e.annVW <= cols) {
+			maxAnnVW = e.annVW
 		}
 	}
 	return maxInlineVW, maxAnnVW

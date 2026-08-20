@@ -42,8 +42,8 @@ Each is a separate Go module — get only what you need.
 the merged kongfig state. Flag defaults shown by `--help` reflect config file
 values, and explicit CLI flags still win.
 
-Key resolution: uses the flag's `config:""` struct tag as the dot-path; falls
-back to the flag name with hyphens replaced by dots.
+Key resolution: the `config:""` struct tag of the flag gives the dot-path. Without
+that tag, the flag name gives the dot-path, and dots replace the hyphens.
 
 If a `ConfigValidator` is registered on `kf` via `kongfig.WithValidator`, it runs
 automatically after kong parses — no extra wiring needed.
@@ -67,9 +67,9 @@ in priority order (load lowest → highest priority last):
 | `provider.Env(k)`      | `env.kong`   | Env vars kong resolved for each flag                        |
 | `provider.Args(kctx)`  | `flags`      | Flags explicitly set on the CLI (skips resolver-set values) |
 
-Env and Args providers also implement `ProviderFieldNamesSupport`, registering the
-actual env var name (e.g. `APP_HOST`) or flag name (e.g. `--host`) for each path
-so renderers can annotate values.
+The Env provider and the Args provider also implement `ProviderFieldNamesSupport`.
+Each one registers the real name for every path, such as the env var `APP_HOST` or
+the flag `--host`. A renderer then annotates the value with that name.
 
 A convenience wrapper loads env + flags in one call:
 
@@ -109,21 +109,21 @@ Embed `show.Flags` in a CLI struct to add config-display flags. Call
 | `--layers`         | bool             | Render each config layer separately instead of the merged view                         |
 | `--verbose` / `-v` | counter          | Show detailed sub-source labels in `--layers` output (repeat for more)                 |
 | `--redacted`       | bool (negatable) | Reveal values hidden by `kongfig:",redacted"` (default: hidden)                        |
-| `--no-comments`    | bool             | Suppress every comment: help texts and source annotations                              |
-| `--no-provenance`  | bool             | Suppress source annotations, keep help comments. Not valid with `--layers`             |
-| `--no-help`        | bool             | Suppress help comments, keep source annotations                                        |
+| `--no-comments`    | bool             | Suppress every comment: the help texts and the source annotations                      |
+| `--no-provenance`  | bool             | Suppress the source annotations, and keep the help comments. Not valid with `--layers` |
+| `--no-help`        | bool             | Suppress the help comments, and keep the source annotations                            |
 
-`--no-provenance` is a merged-view flag: under `--layers` the section header is
-what attributes a layer's values, so the combination is rejected. `Flags.Validate`
-reports it, and kong calls that method through the command struct that embeds
-`Flags` — a command embedding it anonymously with no `Validate` of its own gets
-the check for free; one that declares its own `Validate` shadows it and should
-call `Flags.Validate` from there.
+`--no-provenance` is a merged-view flag. Under `--layers`, the section header is
+what attributes the values of a layer, so kongfig rejects the combination.
+`Flags.Validate` reports it. Kong calls that method through the command struct
+that embeds `Flags`. A command that embeds `Flags` anonymously, and declares no
+`Validate` of its own, gets the check for free. A command that declares its own
+`Validate` shadows the method, and must call `Flags.Validate` from there.
 
-For apps that don't need format selection, **`show.SimpleFlags`** provides a
-simpler set: `--plain`, `--layers`, `--redacted`, the comment flags above, and
-per-source negatable flags (`--no-defaults`, `--no-env`, `--no-file`,
-`--no-flags`).
+For an application that does not need format selection, **`show.SimpleFlags`**
+gives a simpler set. That set holds `--plain`, `--layers`, `--redacted`, the
+comment flags above, and the per-source negatable flags (`--no-defaults`,
+`--no-env`, `--no-file`, `--no-flags`).
 
 Inject the `--format` enum at `kong.New` time so format options match registered
 parsers:
@@ -145,7 +145,7 @@ k, _ := kong.New(&cli,
 
 `charming.Options(kf, reg, themeName)` returns a `[]kong.Option` slice that wires:
 
-- kong-charming's styled help renderer (lipmark theme)
+- the styled help renderer of kong-charming (lipmark theme)
 - a kongfig resolver seeded from `kf` (same as `kongresolver.New(kf)`)
 
 ```go
@@ -161,7 +161,7 @@ opts = append(opts, kongcharming.Options(kf, reg, "auto")...)
 k, _ := kong.New(&cli, opts...)
 ```
 
-When you need the styler for rendering outside of kong (e.g. in `Flags.Render`):
+When you need the styler for a render outside of kong, for example in `Flags.Render`:
 
 ```go
 s := kongcharming.Styler(reg, "auto")

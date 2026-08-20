@@ -23,11 +23,11 @@ kongfig:"name[,option[,option...]]"
 | `kongfig:"my-key,omitempty"`      | Key `"my-key"`, left out of output while it holds nothing         |
 | `kongfig:"my-key,sortby=field"`   | Map `"my-key"`, entries ordered by `field` inside each entry      |
 
-The name part is parsed by `parseTag(tag, fieldName)`: empty name falls back to `strings.ToLower(fieldName)`.
+`parseTag(tag, fieldName)` parses the name part. An empty name becomes `strings.ToLower(fieldName)`.
 
 ### Nested structs
 
-Struct fields whose type is a struct (or pointer to struct) are treated as namespaces — they are recursed into and their fields are added under the parent key:
+Kongfig treats a struct field as a namespace when its type is a struct, or a pointer to a struct. It reads the fields of that struct and adds them under the parent key:
 
 ```go
 type Config struct {
@@ -41,7 +41,7 @@ type DBConfig struct {
 
 This maps to dot-paths `"db.host"` and `"db.port"`.
 
-Anonymous (embedded) structs are squashed into the parent namespace:
+Kongfig squashes an anonymous (embedded) struct into the parent namespace:
 
 ```go
 type Config struct {
@@ -73,8 +73,8 @@ type Config struct {
 p := structsprovider.TagDefaults[Config]()
 ```
 
-Values are always stored as strings; `Get[T]` (via mapstructure) converts them to the
-declared field type at decode time.
+Kongfig always stores the values as strings. At decode time, `Get[T]` converts them to the
+declared field type with mapstructure.
 
 Single-quoted values allow commas and equals signs in defaults:
 
@@ -82,8 +82,9 @@ Single-quoted values allow commas and equals signs in defaults:
 Sep string `kongfig:"sep,default=','"`  // default value is ","
 ```
 
-`TagDefaults[T]()` only includes fields with a `default=` annotation. Fields without it
-are omitted, unlike `structs.Defaults(instance)` which includes all non-zero field values.
+`TagDefaults[T]()` includes only the fields with a `default=` annotation, and omits the
+rest. `structs.Defaults(instance)` behaves differently: it includes every non-zero field
+value.
 
 ---
 
@@ -103,18 +104,18 @@ kf := kongfig.NewFor[Config]()
 kf.RenderWith(ctx, w, renderer) // help comments included
 ```
 
-`NewFor[T]` derives the texts automatically — no extra call needed. Under the hood it uses
-`schema.HelpTextPaths[T]()`, which reflects on `T` and returns a `map[string]string` of
-dot-path → help text:
+`NewFor[T]` derives the texts automatically, and no extra call is necessary. Internally it
+uses `schema.HelpTextPaths[T]()`, which reflects on `T` and returns a `map[string]string`
+of dot-path → help text:
 
 ```go
 texts := schema.HelpTextPaths[Config]()
 // {"host": "hostname or IP to listen on", "port": "TCP port", "labels": "arbitrary key=value labels"}
 ```
 
-Register a set explicitly with the `WithHelpTexts(texts)` option (instance-level, e.g. when
-constructing with `New` rather than `NewFor`), or override the registered set for a single
-render call with `WithRenderHelpTexts(texts)`.
+Register a set explicitly with the `WithHelpTexts(texts)` option. This option is
+instance-level, for example when you construct with `New` instead of `NewFor`. To override
+the registered set for a single render call, use `WithRenderHelpTexts(texts)`.
 
 Use single-quoted values to allow commas and equals signs:
 
@@ -122,17 +123,20 @@ Use single-quoted values to allow commas and equals signs:
 Sep string `kongfig:"sep,help='separator; default is ','"`
 ```
 
-**Prefix matching for maps and slices**: when a field's path is `"labels"`, the help text
-also fires for rendered leaf paths like `"labels.key1"` and `"labels[0]"`. Each help text
-is emitted at most once per render call (first match wins; subsequent paths covered by the
-same key are silent).
+**Prefix matching for maps and slices**: when the path of a field is `"labels"`, the help
+text also fires for rendered leaf paths. Two examples are `"labels.key1"` and
+`"labels[0]"`. Kongfig
+emits each help text at most once per render call. The first match wins, and the later
+paths under the same key stay silent.
 
 **A namespace is described where it is written**: `help=` on a struct or map field is the
-field's own text, not its children's, so a format with a place to put it puts it there — the
-TOML renderer writes it above the `[table]` header, and once above the first `[[block]]` of
-a table array. That is also where the once-per-render mark is spent, so the prefix match
-cannot re-attach the text to the first key inside the table, where it would read as
-documentation of that key. A renderer with nowhere to put such a text leaves it out.
+text of that field. It is not the text of its children. A format with a place for it puts
+it there. The TOML renderer writes it above the `[table]` header, and once above the first
+`[[block]]` of a table array.
+
+That position also spends the once-per-render mark. The prefix match therefore cannot
+re-attach the text to the first key inside the table, where it reads as documentation of
+that key. A renderer with no place for such a text omits it.
 
 ---
 
@@ -142,7 +146,7 @@ documentation of that key. A renderer with nowhere to put such a text leaves it 
 
 ### Inheritance
 
-Redaction is inherited by nested struct fields. A parent marked `redacted` makes all its leaf descendants redacted by default. Individual leaves can opt out:
+Nested struct fields inherit the redaction. A parent marked `redacted` makes all its leaf descendants redacted by default. An individual leaf can override this:
 
 ```go
 type Secrets struct {
@@ -169,19 +173,19 @@ kongfig.RedactedPaths[Config]()
     → renderers call RenderValue(s, v, formatted) → s.Redacted(display)
 ```
 
-The path set is populated at startup from the config struct type, not at runtime. Adding a field with `redacted` and calling `New()` again picks it up.
+Kongfig populates the path set at startup from the config struct type, not at runtime. To include a new field, mark it `redacted` and call `New()` again.
 
 ---
 
 ## inline option
 
-`kongfig:"name,inline"` marks a table as a candidate for a compact one-line form where
-the output format supports it. The mark is format-agnostic: the TOML parser writes an
+`kongfig:"name,inline"` marks a table as a candidate for a compact one-line form, where
+the output format supports it. The mark is format-agnostic. The TOML parser writes an
 inline table (`work = {path = "/w", color = "blue"}`) instead of a `[buckets.work]`
-section, and the YAML parser writes a flow mapping (`work: {path: /w, color: blue}`)
-instead of a nested block mapping. Formats with no compact form ignore it.
+section. The YAML parser writes a flow mapping (`work: {path: /w, color: blue}`) instead
+of a nested block mapping. A format with no compact form ignores the mark.
 
-What gets marked depends on the field's type:
+The type of the field decides what the mark applies to:
 
 ```go
 type Bucket struct {
@@ -199,14 +203,14 @@ type Config struct {
   where `*` matches exactly one path segment.
 - A **struct** field marks its own path (`"tls"`).
 
-`inline=N` caps the number of direct keys the table may hold; a table with more keys falls
-back to a regular section. Plain `inline` (no `=N`) defers to the renderer's default,
-`toml.DefaultInlineMaxKeys` / `yaml.DefaultInlineMaxKeys` (3).
+`inline=N` caps the number of direct keys that the table can hold. A table with more keys
+becomes a regular section. Plain `inline`, with no `=N`, uses the default of the renderer:
+`toml.DefaultInlineMaxKeys` or `yaml.DefaultInlineMaxKeys` (3).
 
 `schema.InlineTablePaths[T]()` returns the marked paths as `[]schema.InlineTableEntry`
 (`{Path, MaxKeys, Overflow}`). `NewFor[T]` calls it automatically and publishes the result
-under [`kongfig.InlineTablesKey`], so both rendering and writing a config file pick it up
-with no extra wiring:
+under [`kongfig.InlineTablesKey`]. A render and a config-file write both read it, with no
+extra wiring:
 
 ```go
 kf := kongfig.NewFor[Config]()          // "buckets.*" → 0, "tls" → 5
@@ -234,9 +238,9 @@ with terminal width.
 
 ## overflow option
 
-`kongfig:"name,overflow"` keeps the compact form even when it does not fit the terminal,
-instead of falling back to the format's roomier shape — a `[section]` for a TOML table,
-`[[section]]` blocks for an array of tables, a block mapping for YAML. It implies
+`kongfig:"name,overflow"` keeps the compact form even when it does not fit the terminal.
+The alternative is the roomier shape of the format. TOML gets a `[section]`, or
+`[[section]]` blocks for an array of tables. YAML gets a block mapping. `overflow` implies
 `inline`, so it stands alone:
 
 ```go
@@ -245,9 +249,10 @@ type Config struct {
 }
 ```
 
-Use it where the shape carries the meaning. A list of two-key rules reads as a list even
-when the lines run past the edge of the window, while a section per rule buries it. Writing
-a config file never consults the terminal width, so the mark only changes rendered output.
+Use it where the shape carries the meaning. A list of two-key rules reads as a list, even
+when the lines run past the edge of the window. A section per rule buries that meaning. A
+config-file write never consults the terminal width, so the mark changes only rendered
+output.
 
 `NewFor[T]` publishes the marked paths under [`kongfig.InlineOverflowKey`] alongside the
 inline marks. The parser route is `toml.WithInlineOverflow("rules")` or
@@ -257,9 +262,10 @@ inline marks. The parser route is `toml.WithInlineOverflow("rules")` or
 
 ## omitempty option
 
-`kongfig:"name,omitempty"` leaves the key out of the output while it holds nothing: an
-empty string, a zero number, `false`, an empty list, map or table, or nothing at all.
-An unmarked key keeps showing its zero value, since a zero is still the configuration.
+`kongfig:"name,omitempty"` leaves the key out of the output while it holds nothing. These
+values count as nothing: an empty string, a zero number, `false`, an empty list, an empty
+map, or an empty table. A missing value also counts as nothing. An unmarked key still shows its zero value,
+because a zero is also config.
 
 The option is also read from the `toml:` and `yaml:` tags, so a struct that already
 carries encoder tags needs no second mark:
@@ -271,21 +277,21 @@ type Config struct {
 }
 ```
 
-A redacted value is never treated as empty — its placeholder stands in for a value that
-is set, and dropping the key would say the opposite.
+Kongfig never treats a redacted value as empty. The placeholder represents a value that
+is set, and a removal of the key says the opposite.
 
 The mark applies to rendered output and to TOML config files written through
 `toml.Parser.MarshalCtx`. `NewFor[T]` publishes the marked paths under
-[`kongfig.OmitEmptyKey`]; renderers that cannot express absence ignore it. In TOML it
-also reaches inside inline tables and table arrays, where the reader cannot delete the
-key by hand afterwards. A table or object left with nothing to show is omitted with its
-key rather than written empty.
+[`kongfig.OmitEmptyKey`]. A renderer that cannot express absence ignores the mark. In TOML
+the mark also reaches inside inline tables and table arrays, where the reader cannot
+remove the key by hand later. If a table or an object has nothing to show, kongfig omits
+it together with its key, and does not write it empty.
 
 ## sortby option
 
 `kongfig:"name,sortby=field"` orders the entries of a map by a value inside them rather
 than alphabetically. Prefix the value name with `-` for descending order, which is the
-usual want when the value is a priority:
+usual choice for a priority value:
 
 ```go
 type Rule struct {
@@ -310,33 +316,30 @@ path = "/"
 priority = 1
 ```
 
-The spec may be dotted (`sortby=meta.priority`) to reach a value one level down. A map
-inside a map value type is marked the same way and matched through a `*` segment, so a
-mark on `Rules` inside `Profile` applies at `profiles.*.rules`.
+The spec can be dotted (`sortby=meta.priority`) to reach a value one level down. A map
+inside a map value type takes the same mark. Kongfig matches it through a `*` segment, so
+a mark on `Rules` inside `Profile` applies at `profiles.*.rules`.
 
-The mark belongs on a map. A struct's children are distinct fields, ordered by
-declaration, so a value inside them says nothing about their order — a mark on anything
-but a map is ignored.
+The mark belongs on a map. The children of a struct are distinct fields in declaration
+order. A value inside them says nothing about that order. Kongfig ignores the mark on
+anything but a map.
 
 Entries whose value is missing, or of a kind the others are not, read last in both
-directions: they cannot be placed among the rest, and sorting them as a zero would
-claim a position they do not have. Entries that compare equal keep the order they would
-have had without the mark, so ties fall back to the document order rather than to map
-iteration.
+directions. Kongfig cannot place them among the rest. A sort of them as a zero claims a
+position that they do not have. Entries that compare equal keep the order from before the
+mark, so a tie uses the document order instead of the map iteration order.
 
-`NewFor[T]` publishes the marked paths under [`kongfig.KeySortByKey`], and the sort is
-applied by `render.OrderedKeys`, so it reaches rendered output and written config files
-alike. It sits below an explicit `WithRenderKeyOrder` and a `WithRenderKeySort`
-comparator, and above the order the documents and the struct fields reported — see
-[docs/render-pipeline.md](render-pipeline.md#key-order).
-
----
+`NewFor[T]` publishes the marked paths under [`kongfig.KeySortByKey`], and
+`render.OrderedKeys` applies the sort. The sort therefore reaches rendered output and
+written config files alike. It sits below an explicit `WithRenderKeyOrder` and a
+`WithRenderKeySort` comparator, and above the order that the documents and the struct
+fields report — see [docs/render-pipeline.md](render-pipeline.md#key-order).
 
 ---
 
 ## env tag (structs provider)
 
-The `env:""` tag is read by `structs.TagEnv[T]()` to load env var values keyed by their kongfig path:
+`structs.TagEnv[T]()` reads the `env:""` tag. It loads the env var values under their kongfig path:
 
 ```go
 type Config struct {
@@ -346,13 +349,13 @@ type Config struct {
 
 `structs.TagEnv[Config]()` reads `os.Environ()`, finds `APP_HOST`, and returns `{"host": value}` with source label `"env.tag"`.
 
-Only env vars that are currently set are included (uses `os.LookupEnv`).
+The provider includes only the env vars that are set (it uses `os.LookupEnv`).
 
 ---
 
 ## config tag (kong provider)
 
-The `config:""` tag is read by `kong/provider` to map kong flags to kongfig dot-paths:
+`kong/provider` reads the `config:""` tag to map kong flags to kongfig dot-paths:
 
 ```go
 type CLI struct {
@@ -360,6 +363,6 @@ type CLI struct {
 }
 ```
 
-Without `config:"api-key"`, `kong/provider` would convert the flag name `"api-key"` → `"api.key"` (hyphens become dots), creating a nested key rather than a flat one. The `config:""` tag forces the exact dot-path.
+Without `config:"api-key"`, `kong/provider` converts the flag name `"api-key"` to `"api.key"`, because hyphens become dots. The result is a nested key instead of a flat one. The `config:""` tag forces the exact dot-path.
 
-`config:"-"` excludes a flag from kongfig entirely (e.g. flags that only control CLI behavior).
+`config:"-"` excludes a flag from kongfig entirely, for example a flag that only controls CLI behavior.

@@ -12,13 +12,13 @@ path       → source label
 "timeout"  → "defaults"
 ```
 
-It is updated on every `mergeInto` call (i.e. on every `Load`). The last writer wins — earlier sources' provenance for a path is overwritten.
+Every `mergeInto` call updates it, which means every `Load` call. The last writer wins, and it overwrites the provenance that an earlier source recorded for that path.
 
 `k.Provenance()` returns a snapshot copy safe for concurrent use.
 
 ## Where a path was written
 
-Provenance names the layer; for file-backed layers it can also give the exact spot:
+Provenance names the layer. For a file-backed layer, it can also give the exact spot:
 
 ```go
 if src, ok := k.SourceFor("db.port"); ok {
@@ -28,9 +28,9 @@ if src, ok := k.SourceFor("db.port"); ok {
 }
 ```
 
-`PositionOf` returns `nil` for layers with no document (env, flags, defaults) and for
-parsers that report no positions — YAML does, TOML does not. See
-[architecture.md](architecture.md#source-positions).
+`PositionOf` returns `nil` for a layer with no document (env, flags, defaults). It also
+returns `nil` for a parser that reports no positions. YAML reports them, and TOML does not.
+See [architecture.md](architecture.md#source-positions).
 
 ## Derived values
 
@@ -38,13 +38,14 @@ parsers that report no positions — YAML does, TOML does not. See
 or inherited defaults rather than explicit user input. It is a **display annotation only** —
 there is no expression language or computed-value machinery.
 
-Providers that load derived/default values should set `Kind: kongfig.KindDerived` in
-their `ProviderInfo()` return value. Renderers (e.g. `style/charming`) use this kind to
-apply a dimmed style to derived values so users can distinguish overridden vs unchanged defaults.
+A provider that loads a derived value or a default value must set
+`Kind: kongfig.KindDerived` in its `ProviderInfo()` return value. A renderer such as
+`style/charming` gives a derived value a dimmed style. The user can then tell an overridden
+default from an unchanged one.
 
 ## Source labels
 
-Source labels are the canonical short names used in provenance and layer filtering:
+Source labels are the canonical short names for provenance and layer filtering:
 
 | Label        | Meaning                                  |
 | ------------ | ---------------------------------------- |
@@ -59,31 +60,33 @@ Source labels are the canonical short names used in provenance and layer filteri
 | `flags`      | Explicit CLI arguments                   |
 | `derived`    | Computed/inherited values                |
 
-Env sub-sources share the `env` prefix. This enables:
+Env sub-sources share the `env` prefix. This prefix gives three features:
 
-- Collision detection: any two `env.*` providers writing the same path triggers a warning.
+- Collision detection: two `env.*` providers that write the same path trigger a warning.
 - Merged display: `env.*` providers collapse to `"env"` in the merged view (non-verbose mode).
 - Filtering: `WithRenderFilterSource([]string{"env"})` matches `env`, `env.tag`, `env.kong`, `env.prefix`.
 
 ## Source label design
 
-Source labels are plain strings. A typed enum was rejected because it would prevent third-party providers from introducing custom labels (e.g. `"consul"`, `"vault"`). A structured type was rejected because the `env.` prefix already encodes the one case where structural matching matters. The `env.*` prefix is the only convention with runtime significance — everything else is advisory. A provider that uses `"environment"` instead of `"env"` will not participate in collision detection or `env` layer grouping; this is enforced by documentation, not the type system.
+Source labels are plain strings. A typed enum was rejected, because it blocks a custom label from a third-party provider, such as `"consul"` or `"vault"`. A structured type was rejected, because the `env.` prefix already encodes the one case where a structural match matters. The `env.*` prefix is the only convention with runtime significance, and everything else is advisory.
+
+A provider that uses `"environment"` instead of `"env"` gets no collision detection and no `env` layer grouping. This documentation is the only enforcement, and the type system is not.
 
 ## FilterSource semantics
 
-`WithRenderFilterSource(filters)` accepts a list of filter entries. Empty = no filter (show all).
+`WithRenderFilterSource(filters)` accepts a list of filter entries. An empty list is no filter, and it shows everything.
 
 **Exclude entries** (`no-` prefix): exclude any source matching the prefix.
 
 - `"no-defaults"` excludes `"defaults"`
 - `"no-env"` excludes `"env"`, `"env.tag"`, `"env.kong"`, `"env.prefix"`
 
-**Include entries** (no prefix): when any positive entry is present, only matching sources pass.
+**Include entries** (no prefix): with one or more positive entries, only a matching source passes.
 
 - `"env"` allows only `"env"`, `"env.tag"`, `"env.kong"`, `"env.prefix"`
 - `"flags"` allows only `"flags"`
 
-Both can be combined: `["env", "no-env.tag"]` = all env sub-sources except `env.tag`.
+The two kinds combine: `["env", "no-env.tag"]` means every env sub-source except `env.tag`.
 
 **Prefix matching**: `"env"` matches `source == "env"` OR `strings.HasPrefix(source, "env.")`.
 
@@ -91,11 +94,11 @@ Both can be combined: `["env", "no-env.tag"]` = all env sub-sources except `env.
 
 ## Layers vs merged provenance
 
-`k.Layers()` returns each provider's snapshot in load order. Each `Layer.Data` is the pre-merge data for that provider (not the merged result). This is what `--layers` displays.
+`k.Layers()` returns the snapshot of each provider in load order. Each `Layer.Data` is the pre-merge data for that provider, and not the merged result. `--layers` shows this data.
 
-The merged `k.data` reflects last-writer-wins across all layers; its provenance is in `k.Provenance()`.
+The merged `k.data` is the last-writer-wins result across all the layers. Its provenance is in `k.Provenance()`.
 
-These serve different purposes:
+The two views have different purposes:
 
 - **Merged view**: "what is the current effective value and who last set it?"
 - **Layer view**: "what did each provider contribute, independent of priority?"

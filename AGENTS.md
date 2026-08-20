@@ -59,17 +59,17 @@ This is a public Go library. Breaking changes affect downstream consumers.
 
 - **NEVER introduce breaking API changes without asking the user first**
 - Breaking changes MUST use `feat!:` or `fix!:` commit prefix (triggers major version bump)
-- Always try to maintain backward compatibility: add new functions/types instead of changing existing ones
-- Deprecate before removing: mark old APIs with `// Deprecated:` and keep them for at least one minor version
-- Adding new exported functions, types, or methods is NOT breaking
-- Changing function signatures, removing exports, or changing behavior IS breaking
+- Always keep backward compatibility. Add a new function or type instead of a change to an existing one
+- Deprecate an API before you remove it. Mark it with `// Deprecated:` and keep it for at least one minor version
+- A new exported function, type, or method is NOT breaking
+- These three changes ARE breaking: a change to a function signature, the removal of an export, a change in behavior
 
 ### Code Quality
 
 - Run `mise run check` before pushing
 - All linters must pass with zero warnings
 - Tests must pass
-- Keep README.md up to date when behavior or API changes
+- When behavior or the API changes, update README.md
 
 ### Version Control
 
@@ -79,7 +79,7 @@ This is a public Go library. Breaking changes affect downstream consumers.
 
 ## Architecture Quick Reference
 
-See `docs/architecture.md` for the full picture. Key rules for working on this codebase:
+See `docs/architecture.md` for the full picture. Key rules for this codebase:
 
 ### Renderers — two mandatory conventions
 
@@ -87,7 +87,7 @@ See `docs/architecture.md` for the full picture. Key rules for working on this c
    ```go
    render.Value(s, v, formattedString)
    ```
-   This handles `RenderedValue` centrally (redaction, codec styling, type dispatch). Forgetting this means redacted values render as their raw value.
+   This function handles `RenderedValue` centrally (redaction, codec styling, type dispatch). If you forget it, a redacted value renders as its raw value.
 
 2. **Never format source annotations inline.** Always use:
    ```go
@@ -101,15 +101,15 @@ See `docs/architecture.md` for the full picture. Key rules for working on this c
 
 ### "Derived" is not computed
 
-`Provenance.SetDerived` / `IsDerived` is a display annotation that lets renderers suppress unchanged defaults. There is **no expression language** — values in the data map are plain Go values. Computed values must be resolved in Go before `Load()`.
+`Provenance.SetDerived` and `IsDerived` form a display annotation. A renderer uses it to suppress an unchanged default. There is **no expression language** — every value in the data map is a plain Go value. Resolve a computed value in Go before you call `Load()`.
 
 ### Source label conventions
 
-Env providers **must** use the `env` prefix (e.g. `env.tag`, `env.prefix`) so collision detection and `--layers` grouping work. Other standard labels: `flags`, `file`, `xdg`, `workdir`, `defaults`, `derived`.
+An env provider **must** use the `env` prefix, such as `env.tag` and `env.prefix`. Collision detection and `--layers` grouping need that prefix. The other standard labels are `flags`, `file`, `xdg`, `workdir`, `defaults` and `derived`.
 
 ### Adding things
 
-- **New renderer**: implement `Renderer`; use `RenderValue` + `RenderSourceAnnotation`; add `Bind(Styler) Renderer` if parser-coupled.
-- **New provider**: implement `Provider` (requires `Load` + `ProviderInfo() ProviderInfo`); return `Kind: KindEnv` for env-sourced data; optionally implement `ProviderDataSupport` (`ProviderData() ProviderData`) for rich annotation rendering — env providers return `envprovider.ProviderData{}`, file providers return their `SourceData` struct.
+- **New renderer**: implement `Renderer`. Use `RenderValue` and `RenderSourceAnnotation`. If the renderer is parser-coupled, add `Bind(Styler) Renderer`.
+- **New provider**: implement `Provider`. It requires `Load` and `ProviderInfo() ProviderInfo`. Return `Kind: KindEnv` for env-sourced data. For rich annotation rendering, also implement `ProviderDataSupport` (`ProviderData() ProviderData`). An env provider returns `envprovider.ProviderData{}`, and a file provider returns its `SourceData` struct.
 - **New Styler method**: add to `Styler` interface → update `style/plain`, `style/charming`, and `mockStyler` in `interfaces_test.go`.
-- **`ProviderData.RenderAnnotation`**: always handle `path=""` gracefully (layer header context has no specific path). Return `""` when there's nothing meaningful to show — `LayerMeta.RenderAnnotation` will omit the parens.
+- **`ProviderData.RenderAnnotation`**: always handle `path=""` (the layer header context has no specific path). Return `""` when there is nothing to show. `LayerMeta.RenderAnnotation` then omits the parens.

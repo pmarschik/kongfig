@@ -24,19 +24,20 @@ Each `Load` call:
 ### Source labels vs display sources
 
 - **Source label** (`Layer.Name`, stored in `Provenance`): short canonical name used for filtering (`"env"`, `"env.tag"`, `"flags"`, `"file"`, `"defaults"`). Must be stable.
-- **Display source** (`Layer.Source`): human-facing string appended to `# ===` layer headers (e.g. `"config.yaml"`, `"env.prefix MINI_"`). May be verbose.
+- **Display source** (`Layer.Source`): human-facing string appended to `# ===` layer headers, such as `"config.yaml"` or `"env.prefix MINI_"`. It can be verbose.
 
-`Load` calls `provider.ProviderInfo()` to get `Name` and `Kind`; `WithSource` overrides `Name` (kind falls back to `inferKind(name)`).
+`Load` calls `provider.ProviderInfo()` to get `Name` and `Kind`. `WithSource` overrides
+`Name`, and `inferKind(name)` then gives the kind.
 
 ### Provenance
 
 `Provenance` records `path → source` for every leaf path that was set. It also holds `derived` entries (`path → baseline value`) for `HideDerived` filtering — these record what a value looked like before any overrides so renderers can suppress unchanged defaults.
 
-**"Derived" is a display annotation, not a computation.** There is no expression language. Values in the data map are plain Go values set by providers. `SetDerived` is called by providers that want to communicate "this is the canonical default for this path" — renderers use `IsDerived` to decide whether to dim/hide the value.
+**"Derived" is a display annotation, not a computation.** There is no expression language. Values in the data map are plain Go values set by providers. A provider calls `SetDerived` to communicate "this is the canonical default for this path". Renderers then use `IsDerived` to decide whether to dim or hide the value.
 
 ### Concurrency
 
-`Kongfig` is safe for concurrent use. A `sync.RWMutex` guards all mutations. `Load` takes a write lock only for the final merge+append; transform application and hooks run outside the lock.
+`Kongfig` is safe for concurrent use. A `sync.RWMutex` guards all mutations. `Load` takes a write lock only for the final merge and append. Transform application and hooks run outside the lock.
 
 ---
 
@@ -75,7 +76,7 @@ A `Renderer` writes `map[string]any` + `Provenance` to an `io.Writer`.
 
 ### Styler
 
-All renderers accept a `Styler` for terminal coloring. `Styler` methods fall into three tiers:
+All renderers accept a `Styler` for terminal coloring. `Styler` has three tiers of methods:
 
 **Leaf value styling** — called directly by renderers on each formatted token:
 
@@ -90,7 +91,7 @@ Comment(s string) string    // comment token (# or //)
 Redacted(s string) string   // redacted placeholder
 ```
 
-**Structured source annotation** — use for new providers; each part styled independently:
+**Structured source annotation** — use this for new providers. Each part is styled independently:
 
 ```go
 SourceKind(s string) string  // the kind token ("file", "env", "flags")
@@ -107,21 +108,22 @@ Annotation(source, s string) string  // full annotation string, styled by source
 Two implementations ship: `style/plain` (no-op, all methods return input unchanged) and
 `style/charming` (lipgloss, resolved once at construction).
 
-When adding a new `Styler` method, update `style/plain`, `style/charming`, and
+When you add a new `Styler` method, update `style/plain`, `style/charming`, and
 `mockStyler` in `interfaces_test.go`.
 
 ### LayerMeta and SourceMeta
 
-All providers must implement `ProviderInfo() ProviderInfo` (part of the `Provider` interface),
-returning a `ProviderInfo{Name, Kind}` struct. Kongfig stamps this into `LayerMeta` along
-with `ID` (monotonic sequence), `Timestamp` (wall clock at load time), and `Format` (parser
-format name, e.g. `"yaml"`, from the parser's `ParserNamer.Format()` if implemented).
+All providers must implement `ProviderInfo() ProviderInfo`, which is part of the `Provider`
+interface. The method returns a `ProviderInfo{Name, Kind}` struct. Kongfig stamps this
+struct into `LayerMeta`, together with `ID` (monotonic sequence), `Timestamp` (wall clock at
+load time), and `Format`. `Format` is the parser format name, such as `"yaml"`. It comes
+from the `ParserNamer.Format()` method of the parser, when the parser implements it.
 
-When `WithSource(name)` overrides the name at load time, `Kind` is inferred from the
-override via `inferKind` (prefix convention: `"env.*"` → `KindEnv`, etc.).
+When `WithSource(name)` overrides the name at load time, `inferKind` reads `Kind` from the
+override. It uses a prefix convention, for example `"env.*"` → `KindEnv`.
 
-Providers that carry rich annotation data (file path, env var name, etc.) also implement
-the optional `ProviderDataSupport` interface:
+Some providers carry rich annotation data, for example a file path or an env var name.
+These providers also implement the optional `ProviderDataSupport` interface:
 
 ```go
 type ProviderDataSupport interface {
@@ -139,24 +141,24 @@ func (p *Provider) ProviderData() kongfig.ProviderData {
 }
 ```
 
-`LayerMeta.RenderAnnotation` renders `"kind (data)"` where data is produced by
-`ProviderData.RenderAnnotation`. If data is empty, renders just `"kind"` (no parens).
+`LayerMeta.RenderAnnotation` renders `"kind (data)"`, where `ProviderData.RenderAnnotation`
+produces the data. If the data is empty, it renders only `"kind"`, with no parentheses.
 
 **`ProviderData.RenderAnnotation(ctx context.Context, s Styler, path string) string`**
 contract:
 
-- `path` is the config dot-path of the value being annotated. Pass `""` at layer-header
+- `path` is the config dot-path of the annotated value. Pass `""` at layer-header
   level (no specific path).
 - Must return a single line (no newlines). Empty string means "no data" (no parens in the
   surrounding `LayerMeta.RenderAnnotation` output).
 - The implementation owns its own styling: call `s.SourceData(...)` for paths/generic
   data, `s.SourceKey(...)` for source-specific identifiers like `$VAR_NAME`.
-- `ctx` carries the `SourceID` (via `SourceIDFromCtx`) so the implementation can look up
-  field names from the `PathFieldNames` injected by `Kongfig.RenderWith`.
+- `ctx` carries the `SourceID` (via `SourceIDFromCtx`) so the implementation can find
+  field names in the `PathFieldNames` injected by `Kongfig.RenderWith`.
 
 ### Source positions
 
-`ProviderData` implementations backed by a text document may also implement the optional
+`ProviderData` implementations backed by a text document can also implement the optional
 `PositionSupport` extension:
 
 ```go
@@ -167,15 +169,15 @@ type PositionSupport interface {
 
 `LayerMeta.PositionOf(path)` delegates to it and returns `nil` for layers with no document
 (env, flags, defaults) or no recorded position. `SourcePosition{File, Line, Col}` prints as
-`config.yaml:42:8`, dropping unknown trailing components.
+`config.yaml:42:8`. It drops unknown trailing components.
 
-The positions themselves come from the parser: `file.Provider` prefers a
-`DocumentParser` over `KeyOrderParser` during `Load`, stamps the file path onto each
-position, and hands them to `SourceData`. See
+The positions themselves come from the parser. During `Load`, `file.Provider` prefers a
+`DocumentParser` over a `KeyOrderParser`. It stamps the file path onto each position, then
+gives the positions to `SourceData`. See
 [implementing-parsers.md](implementing-parsers.md#source-positions-documentparser). YAML
-supports this; TOML does not, because `BurntSushi/toml` keeps key positions unexported.
+supports this. TOML does not, because `BurntSushi/toml` keeps key positions unexported.
 
-Validation reads them back through `PathSource.Position()` — see
+Validation reads them through `PathSource.Position()` — see
 [validation.md](validation.md#source-positions).
 
 ### render.Value — mandatory helper for new renderers
@@ -186,9 +188,9 @@ Validation reads them back through `PathSource.Position()` — see
 render.Value(s, v, formattedString)
 ```
 
-This handles redaction, codec styling, and type dispatch centrally. `formattedString` is the renderer's own serialization of `v` (TOML-quoted, JSON-encoded, `%v`, etc.); it is ignored when the value is redacted.
+This handles redaction, codec styling, and type dispatch centrally. `formattedString` is the renderer's own serialization of `v`, for example TOML-quoted, JSON-encoded, or `%v`. Kongfig ignores it when the value is redacted.
 
-**Why the sentinel over pre-styling?** Styling must happen after format decisions (TOML quoting differs from YAML quoting differs from env quoting). Injecting a styled string into the data map would entangle data with presentation. The sentinel keeps data clean and delegates all styling to the render path.
+**Why the sentinel over pre-styling?** Styling must happen after format decisions, because TOML quoting, YAML quoting and env quoting all differ. If a styled string goes into the data map, it entangles data with presentation. The sentinel keeps data clean and delegates all styling to the render path.
 
 ### render.Annotation
 
@@ -224,44 +226,47 @@ kongfig/                  core: Kongfig, interfaces, provenance, render helpers
 
 ### Internal representation
 
-The internal store is `map[string]any`. Types are not normalised at load time — each provider returns its native types (strings from env, int64 from TOML, float64 from JSON). Coercion is deferred to `Get[T]()`, which uses `mapstructure` with `WeaklyTypedInput: true`. This keeps the load path simple and format-agnostic, and makes the `RedactedValue` sentinel pattern possible (opaque values can be stored alongside plain values without a typed representation).
+The internal store is `map[string]any`. Kongfig does not normalize types at load time. Each provider returns its native types: strings from env, int64 from TOML, float64 from JSON. `Get[T]()` does the coercion with `mapstructure` and `WeaklyTypedInput: true`. This keeps the load path simple and format-agnostic. It also makes the `RedactedValue` sentinel pattern possible, because kongfig can store an opaque value next to plain values without a typed representation.
 
 ### Adding a new renderer
 
 1. Accept `kongfig.Styler`.
 2. For leaf values call `render.Value(s, v, yourFormattedString)` — never `s.String(...)`.
 3. For source annotations call `render.Annotation(ctx, rv, path, s)` — never format inline.
-4. Implement `OutputProvider.Bind(Styler) Renderer` if the renderer is tied to a parser.
+4. If the renderer is tied to a parser, implement `OutputProvider.Bind(Styler) Renderer`.
 
 ### Adding a new provider
 
-1. Implement `Provider` (required: `Load`, `ProviderInfo`). Optionally `ByteProvider` (raw bytes access) and `WatchProvider` (file watching).
-2. Return a stable source label from `ProviderInfo().Name` — use the `env.*` prefix for any env-variable provider so collision detection and `--layers` grouping work correctly.
+1. Implement `Provider`. It requires `Load` and `ProviderInfo`. Optionally implement
+   `ByteProvider` for raw bytes access, and `WatchProvider` for file watching.
+2. Return a stable source label from `ProviderInfo().Name`. For any env-variable provider,
+   use the `env.*` prefix. Collision detection and `--layers` grouping then work correctly.
 3. Optionally implement `ProviderDataSupport` (`ProviderData() ProviderData`) for rich
-   annotation rendering (shows `kind (detail)` instead of just `kind`):
+   annotation rendering (shows `kind (detail)` instead of `kind`):
    - Env-sourced: return `envprovider.ProviderData{}`
    - File-sourced: return `file.SourceData{Path: p.path, DisplayPath: p.displayPath}`
-   - Other: define your own type implementing `ProviderData` and return it
-4. Optionally implement `ProviderFieldNamesSupport` (`FieldNames() map[string]string`) to
-   register per-path field names (env var names like `"$APP_HOST"`, flag names like `"--host"`)
-   so renderers can include them in source annotations. Env and flags providers implement this;
-   file providers typically do not.
-5. Optionally implement `ParserProvider` (`Parser() kongfig.Parser`) if this provider loads
-   format-specific data (e.g. a YAML or TOML file). Required for `--layers` mode to use the
-   correct native-format renderer for this layer instead of the fallback.
-6. Optionally implement `KeyOrderProvider` (`KeyOrder() map[string][]string`) to return the
-   key insertion order captured during `Load`. `Kongfig.Load` stores this in `Layer.KeyOrder`,
-   so `RenderLayers` reproduces the original document order for that layer and the merged
-   view reads in it too — see [Key order](render-pipeline.md#key-order) for how the layers
-   are merged and how document order relates to struct field order. Without it, rendering
-   falls back to struct field order (from `NewFor[T]`) or alphabetical. The built-in
-   `file.Provider` delegates to the parser's `KeyOrderParser` interface.
+   - Other: define your own type that implements `ProviderData`, and return it
+4. Optionally implement `ProviderFieldNamesSupport` (`FieldNames() map[string]string`). It
+   registers per-path field names: env var names like `"$APP_HOST"`, flag names like
+   `"--host"`. Renderers can then include these names in source annotations. Env and flags
+   providers implement this interface. File providers usually do not.
+5. If this provider loads format-specific data, such as a YAML or TOML file, optionally
+   implement `ParserProvider` (`Parser() kongfig.Parser`). `--layers` mode needs it to use
+   the correct native-format renderer for this layer instead of the fallback.
+6. Optionally implement `KeyOrderProvider` (`KeyOrder() map[string][]string`). It returns
+   the key insertion order captured during `Load`. `Kongfig.Load` stores this order in
+   `Layer.KeyOrder`. `RenderLayers` then reproduces the original document order for that
+   layer, and the merged view reads in that order too. See
+   [Key order](render-pipeline.md#key-order) for the merge of the layers, and for the
+   relation between document order and struct field order. Without `KeyOrderProvider`, a
+   render uses struct field order (from `NewFor[T]`) or alphabetical order. The built-in
+   `file.Provider` delegates to the `KeyOrderParser` interface of the parser.
 7. Register via `k.Load(provider)`.
 
 ### RedactedPaths and NewFor
 
-`kongfig.RedactedPaths[T]()` (root package) reflects on `T`'s `kongfig` struct tags and
-returns the set of dot-paths marked `"redacted"`. Use `kongfig.NewFor[T]()` to create a
+`kongfig.RedactedPaths[T]()` (root package) reflects on the `kongfig` struct tags of `T`,
+and returns the set of dot-paths marked `"redacted"`. Use `kongfig.NewFor[T]()` to create a
 `Kongfig` with redacted paths auto-applied — the common case requires no explicit call.
 
 `structs.RedactedPaths[T]()` is deprecated and delegates to the root package function.

@@ -14,25 +14,26 @@ Every parser **must** implement:
 | `kongfig.ParserNamer`    | `Format()`, `Extensions()` | Format name and file extension matching       |
 | `kongfig.OutputProvider` | `Bind(Styler) Renderer`    | Styled output for `--layers` and `RenderWith` |
 
-Every parser **should** also implement:
+Implement these interfaces also. A parser without them loses the features in the Purpose column:
 
 | Interface                | Method                                                                   | Purpose                                                                  |
 | ------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
 | `kongfig.KeyOrderParser` | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)` | Preserve document key order for rendering via `file.Provider.KeyOrder()` |
 | `kongfig.DocumentParser` | `UnmarshalDocument([]byte) (ConfigData, DocumentMeta, error)`            | Key order **and** per-path source positions from a single parse          |
-| `kongfig.CtxMarshaler`   | `MarshalCtx(context.Context, ConfigData) ([]byte, error)`                | Marshal that honours the render options in ctx, key order above all      |
+| `kongfig.CtxMarshaler`   | `MarshalCtx(context.Context, ConfigData) ([]byte, error)`                | Marshal that honors the render options in ctx, key order above all       |
 | `kongfig.DocumentEditor` | `EditDocument([]byte, ConfigData) ([]byte, error)`                       | Rewrite a document in place, keeping comments, key order and layout      |
 
-Without `KeyOrderParser`, rendering falls back to struct field order (from `NewFor[T]`) or
-alphabetical. Implement it if your format's text encoding has a meaningful key order — the
-order feeds both `--layers` and the merged view, where the layers' orders are merged
-document-first ([Key order](render-pipeline.md#key-order)).
+Without `KeyOrderParser`, a render uses struct field order (from `NewFor[T]`) or
+alphabetical order. If the text encoding of your format has a meaningful key order,
+implement the interface. The order feeds `--layers` and the merged view, where kongfig
+merges the orders of the layers document-first
+([Key order](render-pipeline.md#key-order)).
 
-A parser that reports key order should also implement `CtxMarshaler`, or it can read an order
-it cannot write back. Make `Marshal` the thin wrapper — `MarshalCtx(context.Background(), data)` —
-so there is one emitter and no way for the two paths to drift; `MarshalCtx` must stay correct
-with an empty context, since that is what a plain write gives it. See
-[CtxMarshaler](render-pipeline.md#ctxmarshaler).
+A parser that reports key order must also implement `CtxMarshaler`. Without it, the parser
+reads an order that it cannot write again. Make `Marshal` the thin wrapper —
+`MarshalCtx(context.Background(), data)` — so there is one emitter and the two paths cannot
+drift. `MarshalCtx` must stay correct with an empty context, because a plain write gives it
+an empty context. See [CtxMarshaler](render-pipeline.md#ctxmarshaler).
 
 Add compile-time assertions to catch regressions early:
 
@@ -52,8 +53,9 @@ var (
 
 `DocumentParser` supersedes `KeyOrderParser`: `DocumentMeta` carries `KeyOrder` **and**
 `Positions` (dot-path → `kongfig.SourcePosition`), so a parser that can report both parses
-once. `file.Provider` prefers `DocumentParser` and falls back to `KeyOrderParser`, then to
-plain `Unmarshal`. Keep `UnmarshalWithKeyOrder` for API compatibility and delegate:
+once. `file.Provider` prefers `DocumentParser`. If the parser does not have it,
+`file.Provider` uses `KeyOrderParser`, and then plain `Unmarshal`. Keep
+`UnmarshalWithKeyOrder` for API compatibility and delegate:
 
 ```go
 func (p Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string][]string, error) {
@@ -64,16 +66,16 @@ func (p Parser) UnmarshalWithKeyOrder(b []byte) (kongfig.ConfigData, map[string]
 
 Two rules for `Positions`:
 
-- **Record the value's position, not the key's.** That is where a rejected value sits; for
-  a nested table the value position is its first key.
-- **Leave `SourcePosition.File` empty.** A parser only sees bytes; `file.Provider` stamps
-  the canonical file path onto every position after parsing.
+- **Record the position of the value, not the position of the key.** A rejected value sits
+  there. For a nested table, the value position is the position of its first key.
+- **Leave `SourcePosition.File` empty.** A parser sees only bytes. After the parse,
+  `file.Provider` stamps the canonical file path onto every position.
 
-Only formats whose decoder exposes per-key positions can implement this. `gopkg.in/yaml.v3`
-does (`yaml.Node.Line`/`.Column`); `github.com/BurntSushi/toml` does not — it keeps key
-positions unexported and surfaces them only inside a `ParseError`.
+Only a format whose decoder exposes per-key positions can implement this. `gopkg.in/yaml.v3`
+exposes them (`yaml.Node.Line` and `.Column`). `github.com/BurntSushi/toml` does not,
+because it keeps key positions unexported and shows them only inside a `ParseError`.
 
-Consumers read positions back through the layer, never through the parser:
+A consumer reads the positions through the layer, never through the parser:
 
 ```go
 if src, ok := kf.SourceFor("db.port"); ok {
@@ -85,10 +87,11 @@ if src, ok := kf.SourceFor("db.port"); ok {
 
 ### In-place editing (`DocumentEditor`)
 
-`Marshal` writes a document; `EditDocument` changes one. A program that maintains a user's
-config file needs the second: the comments, key order, indentation and quoting the user
-wrote have to survive a one-value change. Implement it when the format has a hand-written
-layout worth keeping — `parsers/toml` and `parsers/yaml` do, `parsers/json` does not.
+`Marshal` writes a document. `EditDocument` changes one. A program that maintains the
+config file of a user needs the second method. The comments, the key order, the indentation
+and the quoting that the user wrote must survive a one-value change. Implement
+`EditDocument` when the format has a hand-written layout to keep — `parsers/toml` and
+`parsers/yaml` do, `parsers/json` does not.
 
 ```go
 func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error)
@@ -96,33 +99,37 @@ func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error
 
 Four rules:
 
-- **`want` is the whole document, not a patch.** A key it does not mention is a key the
-  rewrite removes. Callers get `want` by parsing the document and editing the data.
-- **Change only the text the data change touches.** Compare against the parsed document
-  (`kongfig.EqualValues` compares values, not the Go types that spell them) and leave
-  everything that did not change alone — rewriting an unchanged value would reformat it.
-- **Refuse what the format cannot express as an edit of _this_ document**, rather than
-  guessing: a new TOML key whose value needs a section the file does not have, a YAML value
-  spread over several lines, a mapping that merges another one. Return an error, write
-  nothing, and let the caller fall back to `Marshal`.
-- **Collect the edits, then splice.** Applying byte ranges from the back keeps every offset
-  measured against the document it was read from, and a refusal halfway through leaves the
-  document untouched.
+- **`want` is the whole document, not a patch.** A key that it does not mention is a key
+  that the rewrite removes. A caller builds `want` from a parse of the document and an edit
+  of the data.
+- **Change only the text that the data change touches.** Compare against the parsed
+  document (`kongfig.EqualValues` compares values, not the Go types that spell them). Do
+  not touch anything that did not change, because a rewrite of an unchanged value
+  reformats it.
+- **Refuse what the format cannot express as an edit of _this_ document.** Do not guess.
+  Three examples exist. The first is a new TOML key whose value needs a section that the
+  file does not have. The second is a YAML value across several lines. The third is a
+  mapping that merges another mapping. Return an error, write nothing, and let the caller
+  use `Marshal` instead.
+- **Collect the edits, then splice.** Apply the byte ranges from the back. Every offset
+  then stays correct against the document that you read it from, and a refusal halfway
+  through leaves the document unchanged.
 
-Callers reach it through `kongfig.EditDocument`, which parses the result and compares it
-against `want` before handing the bytes over (`ErrEditNotVerified` when it does not match,
-`ErrNoDocumentEditor` when the parser has no editor). Do not skip that wrapper in your own
-tests: text surgery is only as safe as its verification.
+A caller reaches the editor through `kongfig.EditDocument`. That function parses the result
+and compares it against `want` before it returns the bytes. It returns
+`ErrEditNotVerified` when the result does not match, and `ErrNoDocumentEditor` when the
+parser has no editor. Do not skip that wrapper in your own tests. Text surgery is only as
+safe as its verification.
 
-Both built-in editors work from positions rather than from a re-render — `parsers/yaml`
-reads them off `yaml.Node`, `parsers/toml` has its own scanner (`parsers/toml/scan.go`)
-because `github.com/BurntSushi/toml` does not report them. Whichever it is, the scan must be
-string-literal aware: a `#` or `=` inside a quoted value is text, not syntax, and an editor
-that reads it as syntax rewrites the wrong bytes.
+Both built-in editors work from positions, not from a re-render. `parsers/yaml` reads the
+positions from `yaml.Node`. `parsers/toml` has its own scanner (`parsers/toml/scan.go`),
+because `github.com/BurntSushi/toml` does not report them. Every such scan must be
+string-literal aware. A `#` or an `=` inside a quoted value is text, not syntax, and an
+editor that reads it as syntax rewrites the wrong bytes.
 
 ## Renderer checklist
 
-A `Renderer` returned by `Bind` must handle all of the following. Forgetting any of them means users miss features silently.
+The `Renderer` that `Bind` returns must handle all of the items below. If one is missing, users lose a feature and get no message.
 
 ### 1. `render.Value` — never call `s.String()` directly on leaf values
 
@@ -134,7 +141,7 @@ line := s.String(formatted)
 line := render.Value(s, v, formatted)
 ```
 
-`render.Value` handles `RenderedValue` centrally and applies the correct `Styler` method for the value type.
+`render.Value` handles `RenderedValue` centrally, and it applies the correct `Styler` method for the value type.
 
 ### 2. `render.Annotation` — never format source inline
 
@@ -150,12 +157,12 @@ if ann := render.Annotation(ctx, rv, path, s); ann != "" {
 
 ### 3. `render.NoComments` — gate all comment/annotation output
 
-A renderer that reaches its comments through `render.Annotation` and
-`render.HelpText`/`render.HelpTexts` also gets the finer gates for free:
-`WithRenderNoProvenance()` empties the first, `WithRenderNoHelp()` the second, and
-`WithRenderNoComments()` both. Reading `render.NoComments(ctx)` on its own is still
-correct for deciding whether _any_ comment can appear — but never emit a comment the
-helpers declined to produce.
+A renderer that reaches its comments through `render.Annotation`,
+`render.HelpText` and `render.HelpTexts` also gets the finer gates for free.
+`WithRenderNoProvenance()` empties the first helper. `WithRenderNoHelp()` empties
+the other two. `WithRenderNoComments()` empties all three. `render.NoComments(ctx)`
+alone still answers one question correctly: can _any_ comment appear? Never emit a
+comment that a helper refused to produce.
 
 ```go
 noComments := render.NoComments(ctx)
@@ -183,8 +190,8 @@ if !noComments && helpTexts != nil {
 
 ### 5. `render.AlignSources` — two-pass column alignment
 
-Alignment is **on by default**; users opt out with `WithRenderNoAlignSources()`.
-`render.AlignSources(ctx)` returns `true` unless that option was applied. The pattern:
+Alignment is **on by default**. To disable it, use `WithRenderNoAlignSources()`.
+`render.AlignSources(ctx)` returns `true` until that option applies. The pattern:
 
 ```go
 func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigData) error {
@@ -209,15 +216,15 @@ if align {
 }
 ```
 
-`AlignAnnotationsCtx` may move a marked annotation to a comment line above its value when
-the terminal leaves no room for it inline. Where that would change what the document means
-— above the line closing a folded multi-line string, a comment lands inside the string —
-use `render.AnnMarkerFixed` instead: it aligns when the column has room and follows its
-content when it does not, but is never lifted.
+`AlignAnnotationsCtx` can move a marked annotation to a comment line above its value, when
+the terminal leaves no room for it inline. Sometimes that move changes the meaning of the
+document. Above the line that closes a folded multi-line string, the comment lands inside
+the string. In that place, use `render.AnnMarkerFixed` instead. It aligns when the column
+has room, and it follows its content when the column has no room. Kongfig never lifts it.
 
 ## Testing checklist
 
-Each parser's test file should cover:
+The test file of each parser must cover:
 
 - [ ] Roundtrip: `Marshal` → `Unmarshal` preserves values
 - [ ] Empty input handling
@@ -226,30 +233,30 @@ Each parser's test file should cover:
 - [ ] `RedactedValue` display
 - [ ] `render.NoComments` suppresses annotations
 - [ ] `render.HelpTexts` injects help comments (if format supports comments)
-- [ ] `render.AlignSources` aligns annotations at the same column (default on; opt out via `WithRenderNoAlignSources`)
+- [ ] `render.AlignSources` aligns annotations at the same column (on by default, disabled by `WithRenderNoAlignSources`)
 - [ ] Styler dispatch: `Number`, `Bool`, `Null` are called for correct value types
-- [ ] Typed slice rendering: `[]SomeStruct` and `[]any{ConfigData{...}}` must produce format-native syntax, not Go's `%v` output (`[map[key:val] ...]`)
+- [ ] Typed slice rendering: `[]SomeStruct` and `[]any{ConfigData{...}}` must produce format-native syntax, not the `%v` output of Go (`[map[key:val] ...]`)
 
 ## Format-specific notes
 
 ### JSON (`parsers/json`)
 
-- `Comments: true` enables JSONC mode: `//` and `/* */` stripped before parsing; `//` used for inline annotations.
-- `Compact: true` renders without indentation.
-- Help texts and annotations only appear in JSONC mode (`Comments: true`).
+- `Comments: true` enables JSONC mode. The parser removes `//` and `/* */` before the parse, and it uses `//` for inline annotations.
+- `Compact: true` renders with no indentation.
+- Help texts and annotations appear only in JSONC mode (`Comments: true`).
 
 ### TOML (`parsers/toml`)
 
-- Scalars are rendered before tables (TOML convention: inline values first, then `[section]` headers).
+- The renderer writes the scalars before the tables (TOML convention: inline values first, then `[section]` headers).
 - Section headers use `s.Syntax("[header]")`.
 - Help comments use `# prefix`.
-- Slices of any element type render as `[...]` inline arrays. Use `reflect.TypeOf(v).Kind() == reflect.Slice` rather than a `[]any` type switch; typed slices like `[]SomeStruct` would otherwise fall through to Go's `%v` format.
-- Honour `render.BlockCollections(ctx)`: when true, always emit multiline style regardless of inline length.
+- Slices of any element type render as `[...]` inline arrays. Use `reflect.TypeOf(v).Kind() == reflect.Slice` instead of a `[]any` type switch. Without it, a typed slice like `[]SomeStruct` reaches the `%v` format of Go.
+- Honor `render.BlockCollections(ctx)`. When it is true, always write multiline style, whatever the inline length is.
 
 ### YAML (`parsers/yaml`)
 
 - Help comments use `# prefix`.
-- Supports nested maps via recursive `renderMap`.
-- Slices and maps render as YAML flow syntax (`[{k: v}, ...]`). Use `reflect.TypeOf(v).Kind()` to detect any slice/map — typed slices like `[]SomeStruct` would otherwise fall through to Go's `%v` format.
-- A sub-tree whose path is marked inline (`yaml.WithInlineMaps`, `kongfig:",inline"`) collapses into a flow mapping instead of a nested block mapping — the same marks `parsers/toml` reads for inline tables.
-- Honour `render.BlockCollections(ctx)`: when true, always emit block style regardless of inline length or TTY width.
+- The renderer supports nested maps through a recursive `renderMap`.
+- Slices and maps render as YAML flow syntax (`[{k: v}, ...]`). Use `reflect.TypeOf(v).Kind()` to detect any slice or map. Without it, a typed slice like `[]SomeStruct` reaches the `%v` format of Go.
+- A sub-tree whose path is marked inline (`yaml.WithInlineMaps`, `kongfig:",inline"`) collapses into a flow mapping instead of a nested block mapping. These are the same marks that `parsers/toml` reads for inline tables.
+- Honor `render.BlockCollections(ctx)`. When it is true, always write block style, whatever the inline length or the TTY width is.

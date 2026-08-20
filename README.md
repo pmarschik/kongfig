@@ -1,9 +1,9 @@
 # kongfig
 
-Layered configuration with provenance tracking for Go.
+Layered config with provenance tracking for Go.
 
-Loads config from multiple sources (defaults, env, files, flags) in priority order,
-tracks which source set each value, and renders annotated output for debugging.
+kongfig loads config from multiple sources (defaults, env, files, flags) in priority order.
+It tracks which source set each value, and it renders annotated output for debugging.
 
 ## Install
 
@@ -60,10 +60,10 @@ Use `structs.TagDefaults[T]()` to drive defaults from `default=` struct tag
 annotations instead of a populated instance — see
 [struct-tags.md](docs/struct-tags.md#default-option).
 
-`help='...'` struct tag annotations are emitted as comment lines above each key.
-`NewFor[T]` collects them automatically; `WithHelpTexts` registers a set explicitly and
-`WithRenderHelpTexts` overrides it for one render call. Supports prefix matching (one
-annotation covers all keys in a map/slice field) and emits each text at most once per
+kongfig writes `help='...'` struct tag annotations as comment lines above each key.
+`NewFor[T]` collects them automatically. `WithHelpTexts` registers a set explicitly, and
+`WithRenderHelpTexts` overrides that set for one render call. Prefix matching works too:
+one annotation covers all keys in a map or slice field. Each text appears at most once per
 render call — see [struct-tags.md](docs/struct-tags.md#help-option).
 
 See [`example/minimal`](example/minimal/) for the full minimal example.
@@ -160,9 +160,9 @@ providers := fileprovider.DiscoverAll(ctx,
 
 ### UserDirs and SystemDirs
 
-`UserDirs()` and `SystemDirs()` search platform-appropriate directories
-(`~/.config`, `~/Library/Application Support`, `%APPDATA%`, `/etc`, etc.) and are
-controlled by two method chains:
+`UserDirs()` and `SystemDirs()` search platform-appropriate directories, such as
+`~/.config`, `~/Library/Application Support`, `%APPDATA%` and `/etc`. Two method chains
+control them:
 
 ```go
 discover.UserDirs().
@@ -208,7 +208,8 @@ See [docs/migration.md](docs/migration.md) for the full migration API.
 ## Key migration
 
 Rename config keys across versions without breaking existing configs. Register a rename
-before loading; kongfig silently rewrites any old key it finds in an incoming layer:
+before the load. kongfig then rewrites any old key it finds in an incoming layer, and it
+gives no message:
 
 ```go
 kf.AddRename("db.host", "database.host")      // move key
@@ -255,8 +256,8 @@ kf.SetMergeFunc("tags",    mergefuncs.UnionSet)     // deduplicated union
 
 ## Modules
 
-Packages with external dependencies are separate Go modules so you only pull in what
-you use. Packages without external deps ship in the core module.
+Packages with external dependencies are separate Go modules, so you get only what you
+use. Packages without external dependencies ship in the core module.
 
 **Core** (`go get github.com/pmarschik/kongfig`):
 
@@ -318,12 +319,12 @@ p := tomlparser.New(tomlparser.WithIndent("  "))
 work = { color = "blue", path = "/w" }
 ```
 
-Paths can also be marked on the parser directly with
-`tomlparser.WithInlineTables("buckets.*")`, and the key limit raised with
-`tomlparser.WithInlineMaxKeys(n)`. Rendering additionally reflows the table across
-lines, one pair per line, when the one-line form would not fit the terminal
-(`tomlparser.WithInlineWrap(false)` falls back to a section instead); writing never
-depends on terminal width.
+You can also mark paths on the parser directly with
+`tomlparser.WithInlineTables("buckets.*")`, and raise the key limit with
+`tomlparser.WithInlineMaxKeys(n)`. If the one-line form does not fit the terminal, a render
+reflows the table across lines, one pair per line. With
+`tomlparser.WithInlineWrap(false)` the render uses a section instead. A write never depends
+on terminal width.
 
 See [docs/render-pipeline.md](docs/render-pipeline.md#toml-layout) and
 [docs/struct-tags.md](docs/struct-tags.md#inline-option).
@@ -337,18 +338,19 @@ buckets:
   work: { color: blue, path: /w }
 ```
 
-Paths can be marked on the parser with `yamlparser.WithInlineMaps("buckets.*")` and the
-key limit raised with `yamlparser.WithInlineMaxKeys(n)`. A marked mapping too wide for
-the terminal falls back to a block mapping unless the path is marked
-`yamlparser.WithInlineOverflow(...)`; writing never depends on terminal width.
+You can mark paths on the parser with `yamlparser.WithInlineMaps("buckets.*")`, and raise
+the key limit with `yamlparser.WithInlineMaxKeys(n)`. A marked mapping too wide for the
+terminal becomes a block mapping. To keep the flow form, mark the path with
+`yamlparser.WithInlineOverflow(...)`. A write never depends on terminal width.
 
 See [docs/render-pipeline.md](docs/render-pipeline.md#yaml-layout).
 
 ## Editing a config file in place
 
-A program that changes a user's config file — adding a pattern to a list, pointing a
-path somewhere else — should hand it back with the comments, key order and layout the
-user wrote. `kongfig.EditDocument` rewrites only the text the data change touches:
+A program sometimes changes the config file of a user. It can add a pattern to a list, or
+point a path somewhere else. The program must keep the comments, the key order and the
+layout that the user wrote. `kongfig.EditDocument` rewrites only the text that the data
+change touches:
 
 ```go
 data, _ := tomlparser.Default.Unmarshal(src)
@@ -360,13 +362,15 @@ if errors.Is(err, kongfig.ErrNoDocumentEditor) {
 }
 ```
 
-The data you pass is the whole document, not a patch: a key it does not mention is a
-key the rewrite removes. `EditDocument` parses the result and compares it against that
-data before returning, so a botched rewrite is an error ([`ErrEditNotVerified`]) rather
-than a file you have already written. A change the format cannot express as an edit of
-_this_ document — a new key that would need a TOML section the file does not have, a
-YAML value spread over several lines — is refused with the parser's own error, and the
-document is left alone; fall back to `Marshal` when a reformat is acceptable.
+The data you pass is the whole document, not a patch. A key that the data does not mention
+is a key that the rewrite removes. `EditDocument` parses the result and compares it against
+that data before it returns. A botched rewrite is therefore an error
+([`ErrEditNotVerified`]) and not a file that you already wrote.
+
+Some changes are not expressible as an edit of _this_ document. Two examples: a new key
+that needs a TOML section the file does not have, and a YAML value spread over several
+lines. `EditDocument` refuses such a change with the parser's own error, and it leaves the
+document alone. If a reformat is acceptable, use `Marshal`.
 
 `parsers/toml` and `parsers/yaml` implement it. A parser without an editor reports
 `ErrNoDocumentEditor`, which is about the parser rather than the data — see
@@ -379,9 +383,9 @@ document is left alone; fall back to `Marshal` when a reformat is acceptable.
 The `kongfig/validation` sub-package (core module, no extra dependencies) provides
 per-key validators, cross-key rules (typed projection structs), and schema annotation
 validators (`required`, `required` with custom annotations). Run `v.Validate(kf)` after
-loading; optionally fire validators on each `Load()` via `WithValidateOnLoad`. Composite
-helpers (`ExactlyOneOf`, `AllOrNone`, `RequiredWith`, …) cover common multi-field
-constraints.
+the load. To fire the validators on each `Load()` instead, use `WithValidateOnLoad`.
+Composite helpers (`ExactlyOneOf`, `AllOrNone`, `RequiredWith`, …) cover common
+multi-field constraints.
 
 Violations carry provenance: `PathSource.Position()` reports the `file:line:col` a rejected
 value came from, so error messages can point at the offending line. Positions come from the

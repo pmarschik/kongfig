@@ -36,27 +36,29 @@ io.Writer (terminal / file / buffer)
 
 `prepareRender` calls `wrapRenderData`, which wraps **every** leaf in
 `RenderedValue{Value any, Source SourceMeta, Redacted bool, RedactedDisplay string}`.
-For redacted paths, `Redacted` is set to `true` and `RedactedDisplay` is populated from
-`opts.RedactFn`. Renderers must never inspect leaves directly — they call
-`RenderValue(s, v, formatted)` which handles the type check centrally.
+For a redacted path, `wrapRenderData` sets `Redacted` to `true` and takes
+`RedactedDisplay` from `opts.RedactFn`. Renderers must never inspect leaves directly. They
+call `RenderValue(s, v, formatted)`, which handles the type check centrally.
 
-Wrapping all leaves (not just redacted ones) serves two purposes:
+The wrap covers all leaves, not only the redacted ones, for two reasons:
 
 1. Source metadata (`SourceMeta`) travels with the value, so renderers can call
-   `render.Annotation` without a separate lookup.
-2. Redaction state is resolved once; renderers only style it.
+   `render.Annotation` with no separate lookup.
+2. Kongfig resolves the redaction state once, and renderers only style it.
 
-`RenderedValue` is ephemeral — created fresh on each render call, never stored in the
-internal data map or in layer snapshots. `k.Raw()` and provider snapshots always return
-plain Go values. Pre-styling was rejected: each renderer has its own format conventions
-(TOML-quoted vs YAML-bare vs JSON-encoded), so styling must happen after format
-decisions, not before.
+`RenderedValue` is ephemeral. Kongfig creates it new on each render call, and never stores
+it in the internal data map or in a layer snapshot. `k.Raw()` and provider snapshots always
+return plain Go values. Kongfig rejects pre-styling, because each renderer has its own
+format conventions (TOML-quoted, YAML-bare, JSON-encoded). Styling must therefore happen
+after the format decisions, not before.
 
 ## Styler
 
-`Styler` is a 13-method interface — one method per token class. `render.BaseStyler` is a no-op embed that implements all methods by returning the input unchanged; custom stylers embed it and override only what they need. The interface (rather than a struct of function fields) lets `style/charming` pre-resolve all lipgloss styles at construction time, keeping zero allocations per render call. Adding a new token class requires updating `style/plain`, `style/charming`, and `mockStyler` in `interfaces_test.go`.
+`Styler` is a 13-method interface, with one method per token class. `render.BaseStyler` is a no-op embed. It implements every method and returns the input unchanged. A custom styler embeds it and overrides only the methods that it needs.
 
-`Styler` is the only dependency renderers take for visual output. Methods fall into three tiers:
+The design uses an interface instead of a struct of function fields, so `style/charming` can pre-resolve all lipgloss styles at construction time. A render call then costs zero allocations. When you add a new token class, update `style/plain`, `style/charming`, and `mockStyler` in `interfaces_test.go`.
+
+`Styler` is the only dependency that renderers take for visual output. It has three tiers of methods:
 
 **Leaf value styling** — use via `render.Value` helper, never call directly on leaf values:
 
@@ -88,7 +90,7 @@ SourceKey(s string) string          // source key ($VAR_NAME, --flag)
 Two built-in implementations:
 
 - `style/plain`: returns all strings unchanged (no ANSI, safe for piping)
-- `style/charming`: lipgloss styles backed by a `theme.Set`; styles resolved once at construction (zero allocation per render)
+- `style/charming`: lipgloss styles backed by a `theme.Set`. It resolves the styles once at construction (zero allocation per render)
 
 ## render.Value — mandatory helper
 
@@ -98,7 +100,7 @@ Two built-in implementations:
 render.Value(s, v, formattedString)
 ```
 
-This dispatches to the correct tier method (`s.String`, `s.Number`, `s.Bool`) based on the Go type of `v`, and handles `RenderedValue` centrally (redaction, codec styling). Forgetting this causes redacted values to render as their raw content.
+This helper dispatches to the correct tier method (`s.String`, `s.Number`, `s.Bool`) for the Go type of `v`, and it handles `RenderedValue` centrally (redaction, codec styling). If you forget it, a redacted value renders as its raw content.
 
 ## render.Annotation — mandatory helper
 
@@ -110,17 +112,21 @@ if ann := render.Annotation(ctx, rv, path, s); ann != "" {
 }
 ```
 
-`render.Annotation` returns `""` when `rv` has no source or when `render.NoProvenance(ctx)` is
-true — the latter covers both `WithRenderNoProvenance()` and the broader
-`WithRenderNoComments()` — so callers do not need to check either condition separately.
-Help comments have the mirror gate: `render.HelpText` and `render.HelpTexts` go quiet under
-`WithRenderNoHelp()`, so a renderer that goes through them honors every comment flag.
-It delegates to `LayerMeta.RenderAnnotation` (via `rv.Source.Layer`) which handles
-structured annotation styling (file paths, env var names, flag names via `SourceKind`/`SourceData`/`SourceKey`).
+`render.Annotation` returns `""` in two cases. The first case is an `rv` with no source.
+The second case is a true `render.NoProvenance(ctx)`, which covers both
+`WithRenderNoProvenance()` and the broader `WithRenderNoComments()`. A caller therefore
+tests neither condition itself. The function delegates to
+`LayerMeta.RenderAnnotation` (through `rv.Source.Layer`). That method styles the file
+path, the env var name and the flag name through `SourceKind`, `SourceData` and
+`SourceKey`.
+
+Help comments have the mirror gate. `render.HelpText` and `render.HelpTexts` stay
+silent under `WithRenderNoHelp()`. A renderer that uses them therefore honors every
+comment flag.
 
 ## Source filtering in renderers
 
-Before writing a leaf, renderers check:
+A renderer runs this check before it writes a leaf:
 
 ```go
 filters := render.FilterSourceFromCtx(ctx)
@@ -133,64 +139,65 @@ See [Provenance & Filtering](provenance.md) for filter semantics.
 
 ## Per-layer rendering (--layers)
 
-`renderPerLayer` in `kong/show` iterates `k.Layers()` and renders each layer's snapshot independently. Each layer uses its own `prov` (a fresh `NewProvenance()`, since the snapshot has no inter-layer provenance). Format is chosen per layer via the layer's `Parser` field if set; otherwise inferred from the source label:
+`renderPerLayer` in `kong/show` iterates `k.Layers()` and renders the snapshot of each layer independently. Each layer uses its own `prov` (a fresh `NewProvenance()`, because the snapshot has no inter-layer provenance). The `Parser` field of the layer selects the format. If that field is empty, the source label selects it:
 
 - Source `"flags"` → flags renderer
 - Source `"env"` or `"env.*"` → env renderer
 - Everything else → YAML (default) or the effective format from `effectiveFormat()`
 
-Empty layers are hidden unless `verbose > 0`, in which case they emit `# === source === (empty)`.
+Kongfig hides an empty layer. With `verbose > 0`, the layer emits `# === source === (empty)` instead.
 
-When `verbose == 0`, all `env.*` layers are merged into a single synthetic `"env"` layer before rendering (groupEnvLayers), mirroring how the merged view collapses them.
+When `verbose == 0`, `groupEnvLayers` merges all `env.*` layers into one synthetic `"env"` layer before the render. The merged view collapses them the same way.
 
 ## Render options via context
 
-Render options are passed as a `context.Context` enriched by `prepareRender`. Renderers read options via the typed key accessors in the `render` sub-package (`render.NoComments(ctx)`, `render.HelpTexts(ctx)`, `render.AlignSources(ctx)`, etc.) rather than inspecting a struct directly. This keeps the `Renderer` interface signature stable — new settings are added as new `RenderOption` keys without changing the interface — and allows the same renderer instance to be used for both `--layers` and the merged view with different options per call.
+`prepareRender` enriches a `context.Context`, and that context carries the render options. A renderer reads an option through a typed key accessor in the `render` sub-package, and not from a struct. The accessors are `render.NoComments(ctx)`, `render.HelpTexts(ctx)`, `render.AlignSources(ctx)` and more. This design keeps the signature of the `Renderer` interface stable, because a new setting is a new `RenderOption` key. It also lets one renderer instance serve both `--layers` and the merged view, with different options per call.
 
-Call-time options (`[]RenderOption`) are applied in `Kongfig.RenderWith` / `Kongfig.Render` before the `Renderer.Render` call. The root package exports `WithRender*` functions (e.g. `WithRenderNoComments()`, `WithRenderHelpTexts(...)`) that build `RenderOption` values.
+`Kongfig.RenderWith` and `Kongfig.Render` apply the call-time options (`[]RenderOption`) before the `Renderer.Render` call. The root package exports `WithRender*` functions that build `RenderOption` values, for example `WithRenderNoComments()` and `WithRenderHelpTexts(...)`.
 
 ## Key order
 
-Nothing about a Go map remembers the order its keys were written in, so renderers get
-that order handed to them. `render.OrderedKeys(ctx, prefix, data)` is the single choke
-point: it reads the parent-path → ordered-child-names map bound in the context, emits the
-keys it names in that order, and appends anything left over alphabetically. Every
-renderer and the order-aware `MarshalCtx` funnel through it, so a key order established
-once applies to displayed and written output alike.
+A Go map does not remember the order of its keys, so kongfig gives that order to the
+renderers. `render.OrderedKeys(ctx, prefix, data)` is the single choke point. It reads the
+map of parent-path → ordered-child-names from the context. It emits the keys of that map
+in the given order, and it appends the rest alphabetically. Every renderer and the
+order-aware `MarshalCtx` pass through this function, so one key order applies to displayed
+output and written output alike.
 
 Five rules can have a say about one parent, and `OrderedKeys` settles them in this order:
 
-1. `WithRenderKeyOrder` for this parent, under `RenderKeyOrderKey` — a caller stating the
-   order outright, so the sort hooks below are skipped entirely.
+1. `WithRenderKeyOrder` for this parent, under `RenderKeyOrderKey`. The caller states the
+   order outright, so `OrderedKeys` skips the sort hooks below.
 2. `WithRenderKeySort`, a `KeySortFunc` under `RenderKeySortKey`.
 3. A `sortby=` mark for this parent, under `KeySortByKey`.
-4. The order kongfig derived, under `RenderDerivedKeyOrderKey` — the merge described
-   below.
-5. Alphabetical, for whatever nothing above placed.
+4. The order that kongfig derived, under `RenderDerivedKeyOrderKey` — the merge below.
+5. Alphabetical order, for every key that no rule above places.
 
-The two derived-order keys are separate for exactly this reason: an explicit order has to
-outrank the sort hooks, while the order kongfig worked out on its own is what those hooks
-reorder. Both are read by `render.KeyOrder`, explicit first.
+The two derived-order keys are separate for this reason. An explicit order must outrank
+the sort hooks. The order that kongfig derived is the order that those hooks reorder.
+`render.KeyOrder` reads both keys, and it reads the explicit one first.
 
-`prepareRender` binds the derived map for both the merged view and `--layers`, merging two
-sources:
+`prepareRender` binds the derived map for the merged view and for `--layers`. It merges
+two sources:
 
-- **The documents.** Each layer records what its parser reported (`KeyOrderParser` /
-  `DocumentParser`) in `Layer.KeyOrder`. `Kongfig.KeyOrder()` merges those in pipeline
-  order: the first layer to mention a key at a parent path fixes where it reads, a later
-  layer that re-states the key does not move it, and keys only a later layer introduces
-  follow the ones that do. An override file therefore cannot reshuffle the base file's
-  document, and a layer with nothing to say about order — env, flags, structs — subtracts
-  nothing.
+- **The documents.** Each layer records the report of its parser (`KeyOrderParser` or
+  `DocumentParser`) in `Layer.KeyOrder`. `Kongfig.KeyOrder()` merges those reports in
+  pipeline order. The first layer that mentions a key at a parent path fixes the position
+  of that key. A later layer that re-states the key does not move it, and a key that only
+  a later layer introduces comes after the earlier keys. An override file therefore cannot
+  reshuffle the document of the base file. A layer with no opinion about order — env,
+  flags, structs — removes nothing.
 - **The schema.** `NewFor[T]` collects struct field order into `RenderConfig.FieldOrder`.
 
-Where both have a say about a parent, **the document wins**: it is the one place a human
-wrote the keys down in an order they chose. Field order then supplies the keys no
-document mentioned, ahead of the alphabetical fallback. That covers the parents field
-order cannot reach at all — `schema.FieldOrderPaths` descends only into struct types, so
-map keys, and the fields of a struct inside a map, never get an entry. Declaration order
-is also the weaker signal in practice: `govet`'s `fieldalignment` autofix reorders struct
-fields for packing, which would silently re-sort rendered output that leaned on it.
+Where both sources have an opinion about a parent, **the document wins**. A document is
+the one place where a human wrote the keys in a chosen order. Field order then supplies
+the keys that no document mentions, before the alphabetical fallback.
+
+Field order cannot reach every parent. `schema.FieldOrderPaths` descends only into struct
+types. Map keys therefore never get an entry, and neither do the fields of a struct inside
+a map. Declaration order is also the weaker signal in practice. The `fieldalignment`
+autofix of `govet` reorders struct fields for packing, and that reorders rendered output
+with no message.
 
 Two escape hatches sit above the merge:
 
@@ -201,9 +208,9 @@ Two escape hatches sit above the merge:
 
 ### Order from a value
 
-Neither source above can order the entries of a map: the keys are data, and nothing in
-the schema or the document says which entry matters most. What does say is often a value
-inside the entries — a priority, a weight, a rank. A `sortby=` tag names it, and
+Neither source above can order the entries of a map. The keys are data, and nothing in the
+schema or the document says which entry matters most. A value inside the entries often
+says it — a priority, a weight, a rank. A `sortby=` tag names that value, and
 `WithRenderKeySort` handles what a tag cannot state:
 
 ```go
@@ -219,13 +226,14 @@ kf.RenderWith(ctx, w, r, kongfig.WithRenderKeySort(
     }))
 ```
 
-Both reorder the keys the rules below them produced, so a comparator is handed the
-`sortby` order and a `sortby` mark is handed the document's — which is what makes ties
-fall back to the document order instead of to map iteration. Values compare within their
-kind, and an entry whose value is missing or of another kind reads last in both
-directions rather than sorting as a zero. A comparator that drops or invents keys cannot
-change which keys are rendered: dropped keys are appended in the order they had, invented
-ones ignored.
+Both hooks reorder the keys that the rules below them produced. A comparator therefore
+receives the `sortby` order, and a `sortby` mark receives the document order. A tie
+therefore uses the document order instead of the map iteration order.
+
+Values compare within their kind. An entry whose value is missing, or of another kind,
+reads last in both directions, and does not sort as a zero. A comparator that removes or
+invents keys cannot change which keys a render writes. Kongfig appends a removed key in
+its earlier order, and ignores an invented one.
 
 `sortby` is documented per-tag in [docs/struct-tags.md](struct-tags.md#sortby-option).
 
@@ -239,11 +247,11 @@ type OutputProvider interface {
 }
 ```
 
-When a parser implements it, `Bind` is called to produce a styled renderer. When it does not, `kongfig.Bind` falls back to a `passthroughRenderer` that marshals via the parser and writes plain bytes without styling. This keeps generic providers (structs, in-memory fixtures) free of rendering obligations while still allowing callers to render any `map[string]any` in any supported format regardless of how it was loaded.
+When a parser implements it, `kongfig.Bind` calls `Bind` to produce a styled renderer. When a parser does not implement it, `kongfig.Bind` uses a `passthroughRenderer` instead. That renderer marshals through the parser and writes plain bytes with no styling. Generic providers, such as structs and in-memory fixtures, therefore carry no render obligations. A caller can still render any `map[string]any` in any supported format, whatever the load path was.
 
 ## CtxMarshaler
 
-`Parser.Marshal` sees only the data, which leaves a passthrough render unable to honour anything the render call established — key order first among them. `CtxMarshaler` is the optional way out:
+`Parser.Marshal` sees only the data. A passthrough render therefore cannot honor anything that the render call established, and key order is the first example. `CtxMarshaler` is the optional solution:
 
 ```go
 type CtxMarshaler interface {
@@ -251,9 +259,11 @@ type CtxMarshaler interface {
 }
 ```
 
-`passthroughRenderer` prefers it and falls back to `Marshal`, so implementing it is additive: an existing parser keeps working, and one that adds `MarshalCtx` starts seeing the options — the [key order](#key-order) and its sort hooks, and the `,inline` marks under `InlineTablesKey`, which TOML and YAML both act on. All three built-in parsers implement it, each with `Marshal` reduced to `MarshalCtx(context.Background(), data)` so the two paths cannot drift. That makes the empty context the plain-write case, and every one of them is byte-for-byte what it wrote before when no order is bound — YAML and JSON both fall back to handing the map to their encoder, whose key sorting is not the plain alphabetical order `render.OrderedKeys` produces. That fast path asks `render.HasKeyOrder(ctx)` rather than reading one key, so a derived order or a sort hook is not silently dropped along with the explicit one.
+`passthroughRenderer` prefers `MarshalCtx` and uses `Marshal` otherwise, so the interface is additive. An existing parser keeps working, and a parser that adds `MarshalCtx` starts to see the options. Those options are the [key order](#key-order) with its sort hooks, and the `,inline` marks under `InlineTablesKey`, which TOML and YAML both act on. All three built-in parsers implement the interface, and each one reduces `Marshal` to `MarshalCtx(context.Background(), data)`, so the two paths cannot drift.
 
-The same interface makes marshalling order-aware outside rendering entirely. `WithRenderKeyOrderCtx` builds the context, which is what lets a config file be rewritten in the order it was read:
+The empty context is therefore the plain-write case. With no order bound, every one of those parsers writes byte-for-byte what it wrote before. YAML and JSON both hand the map to their own encoder, whose key sorting is not the plain alphabetical order of `render.OrderedKeys`. That fast path asks `render.HasKeyOrder(ctx)` instead of one key, so kongfig does not drop a derived order or a sort hook with the explicit one.
+
+The same interface makes a marshal order-aware outside a render. `WithRenderKeyOrderCtx` builds the context, so a program can rewrite a config file in the order that it read:
 
 ```go
 data, order, _ := parser.UnmarshalWithKeyOrder(src)
@@ -265,11 +275,12 @@ out, _ := parser.MarshalCtx(kongfig.WithRenderKeyOrderCtx(ctx, order), data)
 
 The TOML parser renders and writes through the same emitter, so `parsers/toml` layout
 options apply to both `Render` and `Marshal`. Construct a configured parser with
-`toml.New(opts...)`; `toml.Default` keeps the defaults.
+`toml.New(opts...)`. The `toml.Default` parser keeps the defaults.
 
 ### Indentation
 
-Nested table headers and the keys they own are indented by depth (BurntSushi style):
+The emitter indents a nested table header and the keys that it owns by depth (BurntSushi
+style):
 
 ```toml
 [server]
@@ -278,56 +289,59 @@ port = 8080
 enabled = true
 ```
 
-`toml.WithIndent(s)` sets the per-level string. The default is two spaces; `WithIndent("")`
-disables indentation and keeps every line flush left.
+`toml.WithIndent(s)` sets the per-level string. The default is two spaces. `WithIndent("")`
+turns the indentation off and keeps every line flush left.
 
 ### Inline tables
 
-A table whose path is marked as inlinable is emitted as a TOML inline table instead of its
-own section:
+A table whose path carries an inline mark becomes a TOML inline table instead of its own
+section:
 
 ```toml
 [buckets]
 work = { color = "blue", path = "/w" }
 ```
 
-Paths are marked either on the parser (`toml.WithInlineTables("buckets.*")`, where a `*`
-segment matches exactly one path segment) or from the config struct via the
-`kongfig:",inline"` tag — see [struct-tags.md](struct-tags.md#inline-option). Tag-derived
-paths reach the parser through the `kongfig.InlineTablesKey` path meta, which `NewFor[T]`
-populates; `Parser.MarshalCtx` accepts the same context so writes honour them too. The mark
-is not TOML-only: YAML reads the same paths and collapses them into flow mappings — see
-[YAML layout](#yaml-layout).
+A mark comes from one of two places. The first is the parser option
+`toml.WithInlineTables("buckets.*")`, where a `*` segment matches exactly one path segment.
+The second is the `kongfig:",inline"` tag on the config struct
+([struct-tags.md](struct-tags.md#inline-option)).
 
-An inlinable table is only inlined if it passes the gates:
+A tag-derived path reaches the parser through the `kongfig.InlineTablesKey` path meta, which
+`NewFor[T]` populates. `Parser.MarshalCtx` accepts the same context, so a write honors these
+paths too. The mark is not TOML-only. YAML reads the same paths and collapses them into flow
+mappings ([YAML layout](#yaml-layout)).
+
+A marked table becomes inline only when it passes the gates:
 
 | Gate                     | Render | Marshal |
 | ------------------------ | ------ | ------- |
 | direct key count ≤ limit | yes    | yes     |
 | fits the terminal width  | yes    | no      |
 
-Failing the key-count gate demotes the table to a section. Failing the width gate reflows it
-across lines instead — see [Reflowing instead of demoting](#reflowing-instead-of-demoting).
+A table that fails the key-count gate becomes a section. A table that fails the width gate
+reflows across lines instead
+([Reflowing instead of demoting](#reflowing-instead-of-demoting)).
 
-The key limit is `toml.DefaultInlineMaxKeys` (3), overridable globally with
-`toml.WithInlineMaxKeys(n)` or per path with `inline=N` in the struct tag (the per-path
-value wins when set). Only direct keys count toward the limit — a nested table inside a
-candidate is emitted as a nested inline table.
+The key limit is `toml.DefaultInlineMaxKeys` (3). `toml.WithInlineMaxKeys(n)` changes it
+globally, and `inline=N` in the struct tag changes it for one path. The per-path value wins
+when it is set. Only the direct keys count toward the limit, because a nested table inside a
+candidate becomes a nested inline table.
 
-Terminal width is deliberately checked on the render path only: a file written to disk must
-not depend on the width of the terminal that happened to produce it.
+Kongfig reads the terminal width on the render path only. A file on disk must not depend on
+the width of the terminal that produced it.
 
-The width gate is waived for paths marked `toml.WithInlineOverflow("rules")` or tagged
-`kongfig:",overflow"`, which reach the parser through the `kongfig.InlineOverflowKey` path
-meta. An overflow mark implies an inline one, and it applies to both shapes the width gate
-governs: a table keeps its one line, and an array of tables keeps a line per entry instead
-of falling back to `[[section]]` blocks.
+An overflow mark waives the width gate. The mark comes from
+`toml.WithInlineOverflow("rules")`, or from a `kongfig:",overflow"` tag that reaches the
+parser through the `kongfig.InlineOverflowKey` path meta. An overflow mark also implies an
+inline one. It applies to both shapes that the width gate governs. A table keeps its one
+line, and an array of tables keeps one line per entry instead of `[[section]]` blocks.
 
 ### Reflowing instead of demoting
 
-An inline table too wide for its line is reflowed rather than demoted to a section: the
-brace opens the key's line, one pair follows per line, and the closing brace lines up under
-the key. This is a newline inside an inline table, which TOML 1.1 allows.
+An inline table too wide for its line reflows instead of becoming a section. The brace opens
+the line of the key. One pair follows per line. The closing brace aligns under the key. This
+shape is a newline inside an inline table, which TOML 1.1 allows.
 
 ```toml
 [fields]
@@ -339,17 +353,17 @@ the key. This is a newline inside an inline table, which TOML 1.1 allows.
   }
 ```
 
-The last pair takes no trailing comma — TOML 1.0 forbids one in an inline table, and the
-reflow keeps every rule but the newline. Pairs are indented one `WithIndent` level past the
-key; with `WithIndent("")` they get two spaces, so the shape survives flush-left output.
+The last pair takes no trailing comma. TOML 1.0 forbids one in an inline table, and the
+reflow keeps every rule except the newline. The pairs sit one `WithIndent` level past the
+key. With `WithIndent("")` they get two spaces, so the shape survives flush-left output.
 
-There is no contest against the block form: the inline mark says the table is an entry
-rather than a section, and that reading holds at any width. A marked table reflows whenever
-it does not fit, however few pairs it has. Demotion comes only from the key-count gate or
-from `toml.WithInlineWrap(false)`.
+The block form is not a contender here. The inline mark says that the table is an entry and
+not a section, and that reading holds at any width. A marked table reflows whenever it does
+not fit, however few pairs it has. Only the key-count gate or `toml.WithInlineWrap(false)`
+turns the table back into a section.
 
-A value that is itself over the width expands in place, on the same terms it would get on a
-line of its own — a nested table reflows, an array becomes a block, a string folds:
+A value that is itself over the width expands in place, on the same terms as a value on a
+line of its own. A nested table reflows, an array becomes a block, and a string folds:
 
 ```toml
 [buckets]
@@ -364,27 +378,26 @@ line of its own — a nested table reflows, an array becomes a block, a string f
   }
 ```
 
-A value that fits is left on its line: expanding it would spend rows to say the same thing.
+A value that fits keeps its line. An expansion of it spends rows to say the same thing.
 
-Provenance rides the opening brace, the way an expanded array's rides its opening bracket —
-the comment belongs to the key, and no line of the table can come between the two. Put on
-the closing brace instead, the aligner could move it above that line, landing it between
-the pairs it annotates. An annotation with several groups that does not fit the opening
-line is written on comment lines above the whole entry.
+Provenance rides the opening brace, the way the provenance of an expanded array rides its
+opening bracket. The comment belongs to the key, and no line of the table can come between
+the two. On the closing brace instead, the aligner can move the comment above that line,
+into the middle of the pairs that it annotates. An annotation with several groups that does
+not fit the opening line goes on comment lines above the whole entry.
 
-`toml.WithInlineWrap(false)` turns the reflow off for parsers whose rendered output is read
-back by a strict TOML 1.0 parser. A marked table that no longer fits then falls back to its
-own `[section]`; one that fits is still inlined. The same holds for the elements of a table
-array: with no wrapped form to weigh against the block form, an element too wide for the
-terminal turns the array into `[[block]]`s rather than spilling a newline into an inline
-table.
+`toml.WithInlineWrap(false)` turns the reflow off. This option fits a parser whose rendered
+output a strict TOML 1.0 parser reads back. A marked table that no longer fits then gets its
+own `[section]`. A table that fits is still inline. The same holds for the elements of a
+table array. With no wrapped form to weigh against the block form, an element too wide for
+the terminal turns the array into `[[block]]`s.
 
-Like the width gate itself, this is render-only: `Marshal` never reflows.
+Like the width gate itself, the reflow is render-only. `Marshal` never reflows.
 
 ### Folding long strings
 
-A string value too wide for the terminal is emitted as a multi-line basic string with a
-line-ending backslash, which trims the newline and the indentation that follows it:
+A string value too wide for the terminal becomes a multi-line basic string with a
+line-ending backslash. That backslash trims the newline and the indentation after it:
 
 ```toml
 description = """the archive keeps every build we shipped, \
@@ -392,8 +405,8 @@ description = """the archive keeps every build we shipped, \
   the release team first"""
 ```
 
-An element of an expanded array folds on the same terms, its continuations indented under
-the element and the comma following the closing delimiter:
+An element of an expanded array folds on the same terms. The continuation lines sit under
+the element, and the comma follows the closing delimiter:
 
 ```toml
 remove = [ # file
@@ -402,33 +415,41 @@ remove = [ # file
 ]
 ```
 
-The value is unchanged — the document reparses to the same string. Folds happen only at
-runs of spaces, so a value with nowhere to break (a long URL, a path) is left on its one
-line rather than split mid-token. Redacted values are never folded: the placeholder stands
-in for the value, and folding it would fold the placeholder. `Marshal` never folds.
+The value is unchanged, and the document reparses to the same string. A fold happens only at
+a run of spaces. A value with nowhere to break (a long URL, a path) therefore keeps its one
+line instead of a split mid-token. Kongfig never folds a redacted value, because the
+placeholder stands for the value, and a fold of it folds the placeholder. `Marshal` never
+folds.
 
-A fold leaves room for the entry's provenance. Past a line-ending backslash a `#` is string
-content, not a comment, so the closing `"""` line is the only line of a folded value a
-comment may follow — and a comment written above it would land inside the string. The fold
-is therefore packed into a width held back by what the annotation needs, on every line, which
-also keeps the block clear of the column the annotations align on, and the annotation is
-pinned to the closing line with [`render.AnnMarkerFixed`](render.md#renderannmarkerfixed) so
-the aligner cannot lift it. The hold-back is dropped when it would take more than half the
-line, or leave too little room to fold into at all: a comment beside the value is worth less
-than a value the reader can follow. When even the closing line has no room, the annotation
-goes on a comment line above the whole entry, outside the string, where a comment is a
-comment. An expanded array holds its elements to the same width, so the block reads as one
-entry with a comment beside its opening bracket.
+A fold leaves room for the provenance of the entry. Past a line-ending backslash, a `#` is
+string content and not a comment. The closing `"""` line is therefore the only line of a
+folded value that a comment can follow. A comment above that line lands inside the string.
+
+The fold reserves that room on the closing line. The reserved width is the width of the
+annotation for a leaf, or the comma of an element in an expanded array. When greedy packing
+overshoots the room, the closing chunk moves to a line of its own. A line that cannot carry
+the comment is the worse home for it.
+[`render.AnnMarkerFixed`](render.md#renderannmarkerfixed) then pins the annotation there, so
+the aligner cannot lift it.
+
+A value with nowhere to break keeps its one long line. Its annotation goes on a comment line
+above the whole entry, outside the string, where a comment is a comment.
+
+The elements of an expanded array carry a second hold-back. The annotation rides the opening
+bracket, so kongfig packs every line below it clear of the column that the annotation aligns
+on. The block then reads as one entry with a comment beside it. Kongfig drops that hold-back
+in two cases: when it takes more than half the line, or when it leaves too little room to
+fold into. A value that the reader can follow is worth more than a clear comment column.
 
 ## YAML layout
 
 Like TOML, the YAML parser renders and writes through settings that apply to both
-`Render` and `Marshal`. Construct a configured parser with `yaml.New(opts...)`;
-`yaml.Default` keeps the defaults.
+`Render` and `Marshal`. Construct a configured parser with `yaml.New(opts...)`. The
+`yaml.Default` parser keeps the defaults.
 
 ### Flow mappings
 
-A mapping whose path is marked is emitted as a YAML flow mapping instead of a nested block
+A mapping whose path carries a mark becomes a YAML flow mapping instead of a nested block
 mapping:
 
 ```yaml
@@ -436,37 +457,37 @@ buckets:
   work: { color: blue, path: /w }
 ```
 
-The marks are the ones TOML reads for [inline tables](#inline-tables): the parser options
-`yaml.WithInlineMaps("buckets.*")` and `yaml.WithInlineOverflow("buckets.*")`, or a
-`kongfig:",inline"` / `kongfig:",overflow"` struct tag reaching the parser through the
-`kongfig.InlineTablesKey` and `kongfig.InlineOverflowKey` path meta. The gates are the same
-too:
+The marks are the ones that TOML reads for [inline tables](#inline-tables). The parser
+options are `yaml.WithInlineMaps("buckets.*")` and `yaml.WithInlineOverflow("buckets.*")`.
+The struct tags are `kongfig:",inline"` and `kongfig:",overflow"`, and they reach the parser
+through the `kongfig.InlineTablesKey` and `kongfig.InlineOverflowKey` path meta. The gates
+are the same too:
 
 | Gate                     | Render | Marshal |
 | ------------------------ | ------ | ------- |
 | direct key count ≤ limit | yes    | yes     |
 | fits the terminal width  | yes    | no      |
 
-The key limit is `yaml.DefaultInlineMaxKeys` (3), overridable globally with
-`yaml.WithInlineMaxKeys(n)` or per path with `inline=N` in the struct tag. Keys left out by
-an [omitempty](struct-tags.md#omitempty-option) mark are not written, so they do not count
-toward the limit either.
+The key limit is `yaml.DefaultInlineMaxKeys` (3). `yaml.WithInlineMaxKeys(n)` changes it
+globally, and `inline=N` in the struct tag changes it for one path. An
+[omitempty](struct-tags.md#omitempty-option) mark removes a key from the output, so that key
+does not count toward the limit either.
 
-Failing either gate keeps the block mapping. This is where YAML differs from TOML: there is
-no reflow, because a flow mapping spread over several lines reads no better than the block
-mapping it came from. The width gate is waived for an overflow-marked path, and `Marshal`
-never consults the width at all — a written file must not depend on the terminal that
-produced it.
+A mapping that fails either gate keeps the block mapping. YAML differs from TOML at this
+point. YAML has no reflow, because a flow mapping across several lines reads no better than
+the block mapping that it came from. An overflow mark waives the width gate. `Marshal` never
+reads the width at all, because a written file must not depend on the terminal that produced
+it.
 
-Values inside a collapsed mapping keep their treatment: a redacted value stays its
-placeholder, a nested mapping collapses along with its parent (a block mapping cannot live
-inside a flow one), and the provenance of the values whose lines are gone moves onto the
-line that replaced them — one comment when they share a source, otherwise one group per
-source naming the keys it covers.
+The values inside a collapsed mapping keep their treatment. A redacted value stays its
+placeholder. A nested mapping collapses with its parent, because a block mapping cannot live
+inside a flow mapping. The provenance of the values whose lines are gone moves onto the line
+that replaced them. One comment covers them when they share a source. Otherwise one group
+per source names the keys that it covers.
 
 ## Bind: parser → renderer
 
 `kongfig.Bind(parser, styler)` wires a `Parser` to a `Styler`:
 
-- If the parser also implements `OutputProvider`, its `Bind(Styler) Renderer` is called — this gives parsers (yaml, toml, json, env) their styled renderers.
-- Otherwise a `passthroughRenderer` marshals via `parser.Marshal` and writes plain bytes with no styling.
+- If the parser also implements `OutputProvider`, `Bind` calls its `Bind(Styler) Renderer` method. That method gives each parser (yaml, toml, json, env) its styled renderer.
+- Otherwise a `passthroughRenderer` marshals through `parser.Marshal` and writes plain bytes with no styling.

@@ -1,6 +1,6 @@
 # Options Reference
 
-There are four distinct option types in kongfig, each scoped to a different call site.
+Kongfig has five distinct option types, each one scoped to a different call site.
 
 ---
 
@@ -11,15 +11,15 @@ Configure the `Kongfig` instance itself. Applied once at construction.
 | Type                                     | Effect                                                                                                                                                                                              |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WithLogger{Logger}`                     | Set the `slog.Logger` for internal warnings. Defaults to `slog.Default()`.                                                                                                                          |
-| `WithRedacted{Paths}`                    | Register dot-paths whose values should be hidden in rendered output. Typically populated from `structs.RedactedPaths[T]()`.                                                                         |
+| `WithRedacted{Paths}`                    | Register the dot-paths whose values kongfig hides in the rendered output. Typically populated from `structs.RedactedPaths[T]()`.                                                                    |
 | `WithRedactionFunc{Fn}`                  | Custom `func(path, value string) string` for redaction display. Default: `"<redacted>"`.                                                                                                            |
 | `WithRedactionString(s)`                 | Convenience wrapper for `WithRedactionFunc` — uses a fixed string.                                                                                                                                  |
-| `WithHelpTexts(texts map[string]string)` | Register per-path help text emitted as comments above keys, for every render on this instance. Auto-populated by `NewFor[T]` from `help=` struct tags; `WithRenderHelpTexts` overrides it per call. |
+| `WithHelpTexts(texts map[string]string)` | Register per-path help text emitted as comments above keys, for every render on this instance. Auto-populated by `NewFor[T]` from `help=` struct tags. `WithRenderHelpTexts` overrides it per call. |
 | `WithHideAnnotationNames{}`              | Suppress both `$VAR_NAME` and `--flag-name` suffixes from all source annotations.                                                                                                                   |
 | `WithHideEnvVarNames{}`                  | Suppress only `$VAR_NAME` suffixes from env source annotations.                                                                                                                                     |
 | `WithHideFlagNames{}`                    | Suppress only `--flag-name` suffixes from flags source annotations.                                                                                                                                 |
 
-These are accumulated into a `renderConfig` inside `Kongfig` and applied automatically when `Kongfig.Render` / `Kongfig.RenderWith` is called.
+Kongfig accumulates these options into a `renderConfig`, and applies them at every `Kongfig.Render` or `Kongfig.RenderWith` call.
 
 ---
 
@@ -29,7 +29,7 @@ Configure a single `Load` call. Applied per-load.
 
 | Type                                         | Effect                                                                                                                                                                                                  |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WithSource{Name}`                           | Override the source label inferred from `provider.Source()`. Use when you load the same provider type multiple times and need distinct labels (e.g. two file providers: `"file.base"`, `"file.local"`). |
+| `WithSource{Name}`                           | Override the source label inferred from `provider.Source()`. Use it when you load the same provider type several times and need distinct labels, for example two file providers with `"file.base"` and `"file.local"`. |
 | `WithSilenceCollisions{}`                    | Suppress all env collision warnings for this load. Pass no keys to silence all.                                                                                                                         |
 | `WithSilenceCollisions{Keys: []string{...}}` | Suppress collision warnings only for specific dot-paths.                                                                                                                                                |
 
@@ -50,26 +50,26 @@ Configure a single `Get` or `GetWithProvenance` call.
 
 ## 4. Render options — `[]RenderOption` / context
 
-Render options are passed as `RenderOption` values to `k.Render`, `k.RenderWith`,
-`k.RenderLayers`, and `show.Flags.Render`. They are applied to a typed key-value bag
-that is injected into a `context.Context` and passed through to `Renderer.Render(ctx, w, data)`.
-Renderers read options via accessors in the `render` sub-package.
+You pass a render option as a `RenderOption` value to `k.Render`, `k.RenderWith`,
+`k.RenderLayers`, or `show.Flags.Render`. Kongfig applies them to a typed key-value bag,
+injects that bag into a `context.Context`, and passes it to `Renderer.Render(ctx, w, data)`.
+A renderer reads the options through the accessors in the `render` sub-package.
 
 | Option                                                  | Effect                                                                                                                                                                                                                                                                                                |
 | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WithRenderNoComments()`                                | Suppress all comment output (help texts + source annotations).                                                                                                                                                                                                                                        |
-| `WithRenderNoProvenance()`                              | Suppress source annotations only; help comments stay. Applied inside `render.Annotation`, so every renderer honors it.                                                                                                                                                                                |
-| `WithRenderNoHelp()`                                    | Suppress help comments only; source annotations stay. Applied inside `render.HelpText`/`render.HelpTexts`.                                                                                                                                                                                            |
-| `WithRenderShowRedacted()`                              | Reveal values that would otherwise be redacted.                                                                                                                                                                                                                                                       |
+| `WithRenderNoProvenance()`                              | Suppress the source annotations only. The help comments stay. Kongfig applies it inside `render.Annotation`, so every renderer honors it.                                                                                                                                                               |
+| `WithRenderNoHelp()`                                    | Suppress the help comments only. The source annotations stay. Kongfig applies it inside `render.HelpText` and `render.HelpTexts`.                                                                                                                                                                       |
+| `WithRenderShowRedacted()`                              | Reveal the values that are otherwise redacted.                                                                                                                                                                                                                                                        |
 | `WithRenderFilterSource(filters []string)`              | Source filter list. Empty = show all. `"env"` = only env. `"no-defaults"` = exclude defaults. See [Provenance & Filtering](provenance.md).                                                                                                                                                            |
-| `WithRenderHelpTexts(texts map[string]string)`          | Per-path human descriptions emitted as comments above keys. Supports prefix matching (parent path covers map/slice leaves). Each text is emitted at most once per render call. Overrides the instance-level set from `WithHelpTexts` / `NewFor[T]`.                                                   |
+| `WithRenderHelpTexts(texts map[string]string)`          | Per-path human descriptions emitted as comments above keys. Supports prefix matching (a parent path covers the map leaves and the slice leaves). Kongfig emits each text at most once per render call. Overrides the instance-level set from `WithHelpTexts` / `NewFor[T]`.                                                   |
 | `WithRenderVerboseSources(sources map[string][]string)` | Enables `[env.tag, env.kong]` multi-source annotation expansion.                                                                                                                                                                                                                                      |
 | `WithRenderFileRawPaths()`                              | File source annotations show the raw canonical path instead of the display path.                                                                                                                                                                                                                      |
 | `WithRenderGroupEnvLayers()`                            | In `RenderLayers`, merge all `env.*` layers into one before iteration.                                                                                                                                                                                                                                |
 | `WithRenderFormat(format string)`                       | Output format: `"yaml"`, `"toml"`, `"json"`, `"env"`, `"flags"`.                                                                                                                                                                                                                                      |
 | `WithRenderNoAlignSources()`                            | Disable column-alignment of source annotation comments.                                                                                                                                                                                                                                               |
-| `WithRenderBlockCollections()`                          | Always render arrays and maps in block/multiline style. Default: inline when short, block when overflowing the terminal width. In TOML, forces `[]ConfigData` slices to use `[[table-array]]` headers; nested `ConfigData` inside elements always forces `[[table-array]]` regardless of this option. |
-| `render.WithTTYSize(cols, rows int)`                    | Set terminal dimensions. `AlignAnnotationsCtx` uses this to fall back to above-line annotations when the terminal is too narrow for inline layout.                                                                                                                                                    |
+| `WithRenderBlockCollections()`                          | Always render arrays and maps in block/multiline style. Default: inline when short, block when overflowing the terminal width. In TOML, forces `[]ConfigData` slices to use `[[table-array]]` headers. A nested `ConfigData` inside an element always forces `[[table-array]]`, whatever this option says. |
+| `render.WithTTYSize(cols, rows int)`                    | Set terminal dimensions. `AlignAnnotationsCtx` reads this size, and moves an annotation to the line above the value when the terminal is too narrow for the inline layout.                                                                                                                             |
 
 ### Context accessors (in `render` package)
 
@@ -87,10 +87,10 @@ render.FieldName(ctx, path)     // string (field name for current source)
 
 ### `*Ctx` injection variants
 
-Every render option has a corresponding `With*Ctx` function that injects the
-option directly into a `context.Context`. These are used when you cannot pass
-`RenderOption` slices — for example when writing a custom renderer or calling
-the render path from middleware:
+Every render option has a matching `With*Ctx` function that injects the option
+directly into a `context.Context`. Use these functions when you cannot pass a
+`RenderOption` slice. Two examples are a custom renderer, and a call into the
+render path from middleware:
 
 | `*Ctx` function                                        | Equivalent `RenderOption`        |
 | ------------------------------------------------------ | -------------------------------- |
@@ -108,7 +108,7 @@ the render path from middleware:
 
 `show.Flags.Render(ctx, w, k, s, opts...)` collects options from:
 
-1. `f.Options(k)` — from CLI flags (`--format`, `--redacted`, `--sources`, `--verbose`, etc.)
+1. `f.Options(k)` — from CLI flags such as `--format`, `--redacted`, `--sources` and `--verbose`
 2. Caller-provided `opts` — overrides from the application
 3. Instance-level settings from `k` (redacted paths, hide flags) — applied by `prepareRender`
 
@@ -116,14 +116,15 @@ the render path from middleware:
 
 ## 5. Context options — discovery and loading
 
-These are injected into the `context.Context` passed to `Load`, `Watch`, and
-file-discovery calls. Providers and discoverers read them to adapt their behaviour.
+These options go into the `context.Context` that `Load`, `Watch` and the
+file-discovery calls receive. A provider or a discoverer reads them and adapts
+its behavior.
 
 ### Core options (`package kongfig`)
 
 | Function                           | Reader             | Effect                                                                                        |
 | ---------------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
-| `WithAppName(ctx, name string)`    | `AppName(ctx)`     | Application name used by file discoverers (e.g. `LocateAppFlat` probes `<dir>/<name>.<ext>`). |
+| `WithAppName(ctx, name string)`    | `AppName(ctx)`     | Application name for the file discoverers. `LocateAppFlat` probes `<dir>/<name>.<ext>`.       |
 | `WithConfigBase(ctx, base string)` | `ConfigBase(ctx)`  | Base filename for `LocateConfigBase` (default: `"config"`).                                   |
 | `WithHiddenFiles(ctx)`             | `HiddenFiles(ctx)` | Also probe hidden variants (`.<appname>.<ext>`, `.<appname>/config.<ext>`) when set.          |
 
@@ -139,4 +140,4 @@ k.MustLoad(ctx, fileprovider.New(...))
 
 | Function                    | Reader                   | Effect                                                                                                   |
 | --------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `WithLongDisplayPaths(ctx)` | `DisplayPathIsLong(ctx)` | Display absolute/relative paths in `--layers` output instead of short tokens like `$xdg` or `$git-root`. |
+| `WithLongDisplayPaths(ctx)` | `DisplayPathIsLong(ctx)` | Show the absolute or relative path in `--layers` output instead of a short token like `$xdg` or `$git-root`. |

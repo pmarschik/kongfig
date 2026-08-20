@@ -5,7 +5,7 @@
 Codecs perform bidirectional transformation between raw config values (strings from env/flags,
 native types from file parsers) and typed Go values. They serve two purposes:
 
-1. **Decode** — convert raw config values to a Go type at `Get[T]` time (e.g. `"1h30m"` → `time.Duration`)
+1. **Decode** — convert a raw config value to a Go type at `Get[T]` time, for example `"1h30m"` → `time.Duration`
 2. **Encode** — convert the typed value back to a canonical string at render time (styled with `Styler.Codec`)
 
 Decode-only codecs skip the encode step — the raw value is shown verbatim by renderers.
@@ -67,8 +67,8 @@ type Config struct {
 kf := kongfig.NewFor[Config](kongfig.WithCodecRegistry(codec.Default))
 ```
 
-When multiple codecs exist for the same Go type (e.g. two `time.Time` codecs), the first
-registered wins for auto-detection. Use explicit `codec=name` tags to select a specific one.
+When several codecs exist for the same Go type, for example two `time.Time` codecs, the
+first registered codec wins the auto-detection. Use explicit `codec=name` tags to select a specific one.
 
 ---
 

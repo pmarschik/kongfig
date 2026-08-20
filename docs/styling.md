@@ -1,7 +1,7 @@
 # Styling
 
 Kongfig uses a `Styler` interface to apply optional terminal styling to rendered config
-output. Two implementations ship in the core library; a third lives in a separate module.
+output. Two implementations ship in the core library. A third one lives in a separate module.
 
 ---
 
@@ -42,7 +42,7 @@ kf.Render(ctx, os.Stdout, s)
 
 #### Customizing colors
 
-Register `ConfigStyleDefs` and/or `LayerStyleDefs` before resolving the theme set:
+Register `ConfigStyleDefs`, or `LayerStyleDefs`, or both, before you resolve the theme set:
 
 ```go
 reg.RegisterStruct("auto", charming.ConfigStyleDefs{
@@ -62,8 +62,8 @@ reg.RegisterStruct("auto", charming.LayerStyleDefs{
 })
 ```
 
-Style name constants are exported from the `charming` package (e.g. `charming.ConfigKey`,
-`charming.LayerFlags`) in case you need to register individual styles by name.
+The `charming` package exports the style name constants, such as `charming.ConfigKey` and
+`charming.LayerFlags`. Use them when you register a single style by name.
 
 #### kong/charming integration
 
@@ -110,10 +110,10 @@ func (BoldKeyStyler) Key(s string) string { return "\033[1m" + s + "\033[0m" }
 | `BraceOpen(s)`       | Opening bracket (`{`, `[`)                                        |
 | `BraceClose(s)`      | Closing bracket (`}`, `]`)                                        |
 | `Comment(s)`         | Comment prefix tokens                                             |
-| `Annotation(src, s)` | Source annotation text (legacy; prefer `SourceKind`/`SourceData`) |
-| `SourceKind(s)`      | Kind token in a structured source annotation (e.g. `file`, `env`) |
+| `Annotation(src, s)` | Source annotation text. Legacy — prefer `SourceKind` and `SourceData` |
+| `SourceKind(s)`      | Kind token in a structured source annotation, such as `file` or `env` |
 | `SourceData(s)`      | Path or data segment of a structured source annotation            |
-| `SourceKey(s)`       | Specific key reference (e.g. `$APP_HOST`, `--log-level`)          |
+| `SourceKey(s)`       | Specific key reference, such as `$APP_HOST` or `--log-level`          |
 | `Redacted(s)`        | Redacted value placeholder (`<redacted>`)                         |
 | `Codec(s)`           | Values encoded by a registered `Codec`                            |
 

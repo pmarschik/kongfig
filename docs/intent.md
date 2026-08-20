@@ -1,33 +1,37 @@
-<!-- read_when: starting work on this repo; planning new features; clarifying scope -->
+<!-- read_when: starting work on this repo, planning new features, clarifying scope -->
 
 # Intent
 
 ## What kongfig is
 
-A layered configuration library for Go CLIs. The core proposition: not just "load config
-from multiple sources" but _show the user exactly where each value came from_ — via a
-`show-config`-style command that renders annotated output in each source's native format.
+A layered config library for Go CLIs. The core proposition is more than "load config from
+multiple sources". Kongfig shows the user exactly where each value came from. A
+`show-config`-style command renders the annotated output in the native format of each
+source.
 
 Most config libraries answer "what is the value of X?".
 Kongfig also answers "which source set X, and what did every other source contribute?".
 
 ## Design principles
 
-- **Layers are preserved, not just merged.** Each `Load` call records a snapshot. The
-  merged view is derived; the layer snapshots are primary and always inspectable.
-- **Provenance is a first-class citizen.** Every leaf value tracks its source label.
-  Renderers annotate values inline; the user sees `host: prod.example.com  # env $APP_HOST`.
+- **Kongfig preserves the layers, and does not only merge them.** Each `Load` call records
+  a snapshot. The merged view is derived from those snapshots. The layer snapshots are
+  primary, and they stay inspectable.
+- **Provenance is a first-class citizen.** Every leaf value tracks its source label. A
+  renderer annotates a value inline, so the user sees
+  `host: prod.example.com  # env $APP_HOST`.
 - **Rendering is part of the public API.** `Renderer`, `Styler`, `OutputProvider`, and
-  `LayerMeta` are public interfaces. Consumers extend them; the library doesn't own output.
+  `LayerMeta` are public interfaces. A consumer extends them, because the library does not
+  own the output.
 - **Format fidelity.** A YAML file renders as YAML, TOML as TOML. `Layer.Parser` carries
-  the native format; per-layer rendering uses it automatically.
+  the native format, and a per-layer render uses it automatically.
 - **kong-aware, not kong-required.** The core module has zero kong dependency. The
   `kong/provider`, `kong/show`, `kong/resolver`, `kong/charming` modules are opt-in.
 
 ## CLI behavior: `show-config` intent
 
-The `kong/show.Flags` struct is designed to be embedded in any CLI's `show-config`
-(or `--show-config`) command. The intended flag combinations and their behaviors:
+Any CLI can embed the `kong/show.Flags` struct in its `show-config` command, or in a
+`--show-config` flag. These are the intended flag combinations and their behaviors:
 
 ### Merged view (default)
 
@@ -35,21 +39,21 @@ No `--layers` flag. Renders the single merged map.
 
 | Flags             | Behavior                                                                                                                                                          |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _(none)_          | Merged config; format chosen from registered parsers (first registered, or YAML if none); inline `# source` annotations on each value.                            |
-| `--format=X`      | Force a specific output format (yaml/toml/json/env/flags). Overrides the inferred default. Not meaningful in `--layers` mode (each layer uses its native format). |
-| `--no-comments`   | Suppress every comment: help texts and source annotations.                                                                                                        |
-| `--no-provenance` | Suppress source annotations, keeping help comments. Merged view only — rejected together with `--layers`.                                                         |
-| `--no-help`       | Suppress help comments, keeping source annotations.                                                                                                               |
-| `--redacted`      | Reveal values that are normally hidden (e.g. passwords).                                                                                                          |
+| _(none)_          | Merged config. The format comes from the registered parsers (first registered, or YAML if none). Each value gets an inline `# source` annotation.                  |
+| `--format=X`      | Force a specific output format (yaml/toml/json/env/flags). Overrides the inferred default. Not meaningful in `--layers` mode (each layer uses its native format).  |
+| `--no-comments`   | Suppress every comment: the help texts and the source annotations.                                                                                                |
+| `--no-provenance` | Suppress the source annotations, and keep the help comments. Merged view only — rejected together with `--layers`.                                                |
+| `--no-help`       | Suppress the help comments, and keep the source annotations.                                                                                                      |
+| `--redacted`      | Reveal the values that are normally hidden, such as a password.                                                                                                   |
 
-**Note:** Default format selection (inferring YAML vs. TOML from registered parsers) is
-planned but not yet implemented. Currently always defaults to YAML.
+**Note:** The default format selection is planned, and not yet implemented. That selection
+reads YAML or TOML from the registered parsers. The default today is always YAML.
 
 ### Per-layer view (`--layers`)
 
 Renders each config source as a separate section. Each layer uses its native format.
-`--format` is not meaningful here (native format wins); it acts only as a fallback for
-layers with no native renderer (e.g. `defaults`, `derived`).
+`--format` has no meaning here, because the native format wins. It applies only to a layer
+with no native renderer, such as `defaults` or `derived`.
 
 | Flags                    | Behavior                                                                                                               |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
@@ -60,38 +64,39 @@ layers with no native renderer (e.g. `defaults`, `derived`).
 | `--layers --no-file`     | Exclude file/xdg/workdir layers.                                                                                       |
 | `--layers --no-flags`    | Exclude the flags layer.                                                                                               |
 
-The `--no-<source>` flags are **not built into `kong/show.Flags`**. Applications wire them
-manually using `BuildFilterSource` (see `example/common` and `example/full`). Two variants
-are possible: negatable boolean flags per source (`--no-defaults`, `--no-env`, …) or a
-single `--sources=defaults,env,file,flags` list flag. Neither is in `kong/show` yet;
-tracked as a future feature.
+The `--no-<source>` flags are **not built into `kong/show.Flags`**. An application wires
+them manually with `BuildFilterSource` (`example/common` and `example/full`). Two variants
+are possible. The first is one negatable boolean flag per source (`--no-defaults`,
+`--no-env`, …). The second is a single `--sources=defaults,env,file,flags` list flag.
+Neither one is in `kong/show` yet, and both are tracked as a future feature.
 
 ### Source annotation detail (`-v` / `--verbose`)
 
 `--verbose` / `-v` is a counter flag:
 
-- **0 (default):** `env.*` sub-sources collapsed to `env` in layer headers; per-value
-  annotations show `# env $APP_HOST`.
-- **1+ (`-v`):** Sub-source labels shown in full (`env (env.tag)`, `env (env.kong)`).
-  Planned: additional levels may show more annotation detail.
+- **0 (default):** the layer headers collapse the `env.*` sub-sources to `env`. A per-value
+  annotation shows `# env $APP_HOST`.
+- **1+ (`-v`):** the layer headers show the sub-source labels in full (`env (env.tag)`,
+  `env (env.kong)`). Planned: a higher level can show more annotation detail.
 
 ### `--plain` / `--no-plain`
 
-Available on `SimpleFlags`. Disables ANSI color output. When `Flags` is used, the caller
-controls styling by passing the appropriate `Styler` to `Render`.
+Available on `SimpleFlags`. Turns the ANSI color output off. With `Flags`, the caller
+controls the styling and passes the correct `Styler` to `Render`.
 
 ### `--no-comments` / `--no-provenance` / `--no-help`
 
 Comments are on by default. `--no-provenance` drops the per-value `# env.tag $APP_HOST`
-annotations, `--no-help` drops the help comments above each key, `--no-comments` drops both.
+annotation. `--no-help` drops the help comment above each key. `--no-comments` drops both.
 
-`--no-provenance` is a merged-view flag: with `--layers` the section header is what
-attributes a layer's values, and per-value annotations are already suppressed for the
-layer being rendered, so the combination is rejected rather than silently ignored.
-`--no-help` and `--no-comments` stay meaningful per layer and are accepted there.
+`--no-provenance` is a merged-view flag. With `--layers`, the section header is what
+attributes the values of a layer, and the per-value annotations are already silent
+for the rendered layer. Kongfig therefore rejects the combination, and does not
+ignore it silently. `--no-help` and `--no-comments` stay meaningful per layer, and
+kongfig accepts them there.
 
 ### `--redacted` / `--no-redacted`
 
-`--no-redacted` (default): values at paths registered via `kongfig.WithRedacted` or
-`kongfig.NewFor[T]()` are replaced with `<redacted>` in all output.
-`--redacted`: reveals the raw values.
+`--no-redacted` (default): every output shows `<redacted>` for a path that
+`kongfig.WithRedacted` or `kongfig.NewFor[T]()` registered.
+`--redacted`: shows the raw values.

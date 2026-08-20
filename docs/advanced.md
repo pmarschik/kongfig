@@ -1,6 +1,6 @@
 # Advanced Features
 
-Reference for power-user features that don't warrant a dedicated page.
+Reference for power-user features that do not warrant a dedicated page.
 For CLI integration (`ScanFlag`, kong packages) see [cli.md](cli.md).
 
 ---
@@ -36,7 +36,7 @@ cfg, err := kongfig.Get[Config](kf, kongfig.Strict())
 
 `Get` always applies these mapstructure hooks before user-supplied `TypedDecodeHook` hooks:
 
-- `TextUnmarshallerHookFunc` — any type implementing `encoding.TextUnmarshaler` (e.g. `net.IP`, `time.Time`, `net.IPNet`) is decoded automatically from strings.
+- `TextUnmarshallerHookFunc` — kongfig decodes any type that implements `encoding.TextUnmarshaler` from strings, for example `net.IP`, `time.Time` and `net.IPNet`.
 - `StringToTimeDurationHookFunc` — `time.Duration` fields decode from strings like `"1h30m"`.
 
 These cover the most common stdlib types with no extra wiring.
@@ -48,7 +48,7 @@ func TypedDecodeHook[T any](fn func(string) (T, error)) GetOption
 ```
 
 Registers a conversion hook for string config values into non-scalar Go types.
-Use this for types that don't implement `encoding.TextUnmarshaler` (e.g. `*url.URL`, `*regexp.Regexp`).
+Use this for types that do not implement `encoding.TextUnmarshaler`, such as `*url.URL` and `*regexp.Regexp`.
 
 ```go
 cfg, err := kongfig.Get[Config](kf,
@@ -58,7 +58,11 @@ cfg, err := kongfig.Get[Config](kf,
 )
 ```
 
-**TypedDecodeHook vs AddTransform:** these operate at different pipeline stages and are not interchangeable. `TypedDecodeHook` runs at decode time and doesn't touch the stored map — use it when you want a custom Go type in your struct but the config still stores and renders as a plain string. `AddTransform` runs at load time and modifies what's stored — use it for value normalization (e.g. trim, lowercase) that should persist in the map and affect rendering. Storing custom types like `net.IP` via `AddTransform` breaks renderers.
+**TypedDecodeHook vs AddTransform:** these operate at different pipeline stages and are not interchangeable.
+
+`TypedDecodeHook` runs at decode time and does not touch the stored map. Use it when your struct needs a custom Go type, but the config must still store and render a plain string.
+
+`AddTransform` runs at load time and changes what the map stores. Use it for value normalization, for example a trim or a lowercase, that must persist in the map and affect rendering. CAUTION: do not store a custom type like `net.IP` through `AddTransform`. It breaks renderers.
 
 ### WithCodec — named bidirectional codec
 
@@ -70,12 +74,12 @@ func WithCodecRegistry(r *CodecRegistry) Option
 Registers a named bidirectional codec (`Decode any→T`, `Encode T→string`) on the Kongfig
 instance. Codecs serve two purposes:
 
-1. **Load-time decode**: when a `codec=name` struct tag annotation is present, or when
-   the field's Go type matches a registered codec, the raw config value is decoded into
-   the typed value at load time. Validators see the typed value.
-2. **Render-time encode**: typed values stored in the map are encoded back to their
-   canonical string before rendering. The Styler dispatches to `s.Codec(formatted)` so
-   themes can visually distinguish codec-transformed values.
+1. **Load-time decode**: at load time, kongfig decodes the raw config value into the typed
+   value. Two conditions trigger this decode: a `codec=name` struct tag annotation, or a Go
+   field type that matches a registered codec. Validators see the typed value.
+2. **Render-time encode**: before a render, kongfig encodes each typed value in the map to
+   its canonical string. The Styler dispatches to `s.Codec(formatted)`, so themes can show
+   codec-transformed values differently.
 
 The `codec` sub-package provides ready-made values for common stdlib types:
 
@@ -104,9 +108,9 @@ type Config struct {
 }
 ```
 
-`Encode` converts a stored typed value back to its canonical string for rendering.
-If `Encode` is nil, no render-time encoding is applied (the decoded value passes through to renderers as-is).
-`Decode` accepts `any` — it should pass through values already of type `T` and parse strings otherwise.
+`Encode` converts a stored typed value to its canonical string for rendering.
+If `Encode` is nil, kongfig does no render-time encoding, and the renderers get the decoded value unchanged.
+`Decode` accepts `any`. It must pass a value that is already of type `T` through unchanged, and parse a string.
 
 Use `NewCodecRegistry` + the method form to build a shared registry across multiple instances:
 
@@ -126,7 +130,7 @@ func (k *Kongfig) RegisterCodec(path string, e CodecEntry)
 func (k *Kongfig) AddCodec(path string, fn func(any) any)
 ```
 
-Both register a per-path codec on an existing `*Kongfig` instance (not just at construction time).
+Both register a per-path codec on an existing `*Kongfig` instance. Construction time is not the only opportunity.
 
 **`RegisterCodec`** registers a full bidirectional codec for a path. Use `Of[T]` to wrap:
 
@@ -137,14 +141,15 @@ kf.RegisterCodec("timeout", kongfig.Of(codec.Duration))
 
 The Encode direction runs at render time and triggers `s.Codec(formatted)` styling.
 
-**`AddCodec`** is decode-only — for value normalization where no render-time encoding is
-needed and the rendered value should display the normalized form directly:
+**`AddCodec`** is decode-only. Use it for value normalization that needs no render-time
+encoding, where the render shows the normalized form directly:
 
-````go
+```go
 kf.AddCodec("mode", func(v any) any {
     if s, ok := v.(string); ok { return strings.ToLower(s) }
     return v
 })
+```
 
 ---
 
@@ -152,9 +157,9 @@ kf.AddCodec("mode", func(v any) any {
 
 ```go
 func MustLoadAll[P Provider](ctx context.Context, k *Kongfig, providers []P, opts ...LoadOption)
-````
+```
 
-Calls `k.MustLoad` for each provider in order. Useful when loading from a slice of discovered file providers.
+Calls `k.MustLoad` for each provider in order. Use it for a slice of discovered file providers.
 
 ```go
 providers := fileprovider.DiscoverAll(ctx, discover.UserDirs(), discover.Workdir(), yamlparser.Default)
@@ -169,9 +174,9 @@ kongfig.MustLoadAll(ctx, kf, providers)
 func (k *Kongfig) LoadParsed(data ConfigData, source string, opts ...LoadOption) error
 ```
 
-Merges a pre-parsed `ConfigData` map directly, bypassing provider loading.
-Transforms are applied and `OnLoad` hooks fire normally.
-Useful for test fixtures, custom readers, or when you already have a `map[string]any`.
+Merges a pre-parsed `ConfigData` map directly, with no provider load.
+Kongfig applies the transforms, and the `OnLoad` hooks fire as normal.
+Use this method for test fixtures, for custom readers, or when you already hold a `map[string]any`.
 
 ```go
 kf.LoadParsed(kongfig.ConfigData{"port": 9090}, "test-override")
@@ -211,11 +216,11 @@ func (k *Kongfig) OnLoad(fn func(LoadEvent) LoadResult)
 ```
 
 Fires after each `Load` call, before the data is committed.
-Return `LoadResult{Err: err}` to reject the load — `k.data` is left unchanged.
+Return `LoadResult{Err: err}` to reject the load. Kongfig then keeps `k.data` unchanged.
 
 - `LoadEvent.Delta` — keys that changed in this load
 - `LoadEvent.ProposedData` — full merged state after this load (read the proposed state here, not `k.All()`)
-- `LoadEvent.Layer` — the layer being loaded
+- `LoadEvent.Layer` — the layer of this load
 
 The `validation` package uses `OnLoad` internally when `WithValidateOnLoad` is set.
 
@@ -228,7 +233,7 @@ The `validation` package uses `OnLoad` internally when `WithValidateOnLoad` is s
 func TagDefaults[T any]() Provider
 ```
 
-Returns a `Provider` that reads `default=` annotations from `T`'s `kongfig` struct tags, without requiring a populated instance.
+Returns a `Provider` that reads the `default=` annotations from the `kongfig` struct tags of `T`. A populated instance is not necessary.
 
 ```go
 type Config struct {

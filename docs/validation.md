@@ -8,13 +8,13 @@ with configurable per-load or post-load execution.
 
 | Concept              | What it does                                                                          |
 | -------------------- | ------------------------------------------------------------------------------------- |
-| `Validator`          | Central registry; accumulates validator definitions and wires into `*kongfig.Kongfig` |
+| `Validator`          | Central registry that accumulates validator definitions and wires into `*kongfig.Kongfig` |
 | `AddValidator`       | Per-key validation: fires for one dot-path                                            |
 | `Rule[T]`            | Cross-key validation: decodes a typed projection struct and validates relationships   |
 | `Schema[T]`          | Annotation-driven validation: reads `kongfig` struct tags to install validators       |
 | `RegisterAnnotation` | Extend the annotation system with custom tag options                                  |
 | `Severity`           | `Error` / `Warning` / `Info` / `Hint` — only `Error` causes `Err()` to return non-nil |
-| `Diagnostics`        | Bag of violations returned by `Validate()`; call `.Err()` for a plain `error`         |
+| `Diagnostics`        | Bag of violations from `Validate()`. Call `.Err()` for a plain `error`                |
 
 ---
 
@@ -61,8 +61,8 @@ v.AddValidator(path string, fn validation.Func)
 ```
 
 - `fn` receives `Event{Key, Value}` and returns `[]FieldViolation`.
-- The validator is skipped silently when the key is absent from the merged config.
-- Multiple validators may be registered for the same path; all run.
+- Kongfig skips the validator silently when the merged config has no such key.
+- Several validators can share the same path. All of them run.
 
 To fire all validators on every `Load()`, pass `WithValidateOnLoad` at construction time
 (see [ValidateOnLoad — global switch](#validateonload--global-switch) below).
@@ -78,7 +78,7 @@ v.AddRule(r)
 
 `Rule[T]` decodes the Kongfig into `T` via `kongfig.GetByPaths[T]` and calls `fn`.
 Each field in `T` must use its `kongfig` tag as a **full dot-delimited path from the
-config root** — no `At()` prefix is accepted or needed:
+config root**. `Rule[T]` accepts no `At()` prefix, and needs none:
 
 ```go
 type DBConnRule struct {
@@ -87,21 +87,21 @@ type DBConnRule struct {
 }
 ```
 
-Violation paths are inferred automatically from `T`'s leaf tags.
+Kongfig infers the violation paths from the leaf tags of `T`.
 
 `RuleValidator` is opaque — construct it only with `Rule`.
 
 ### Composite rule helpers
 
 The `validation` package ships helpers for common multi-field constraints. Pass field
-pointers within the decoded struct `T` — paths are derived from each field's `kongfig`
-tag automatically:
+pointers inside the decoded struct `T`. Kongfig derives each path from the `kongfig` tag of
+the field:
 
 | Helper                              | Constraint                                        |
 | ----------------------------------- | ------------------------------------------------- |
 | `ExactlyOneOf(&c, &c.A, &c.B)`      | Exactly one field must be non-zero                |
 | `AtLeastOneOf(&c, &c.A, &c.B)`      | One or more fields must be non-zero               |
-| `MutuallyExclusive(&c, &c.A, &c.B)` | At most one field may be non-zero                 |
+| `MutuallyExclusive(&c, &c.A, &c.B)` | At most one field can be non-zero                 |
 | `AllOrNone(&c, &c.A, &c.B)`         | Either all are non-zero, or none are              |
 | `RequiredWith(&c, &c.F, &c.Trig)`   | `F` required when any trigger field is non-zero   |
 | `RequiredWithout(&c, &c.F, &c.FB)`  | `F` required when none of the fallback fields are |
@@ -117,17 +117,17 @@ v.AddRule(validation.Rule(func(c TLSConfig) []validation.FieldViolation {
 }))
 ```
 
-All helpers panic if a pointer cannot be matched to a field in `*T` (programming error).
+If a pointer does not match a field in `*T`, every helper panics (programming error).
 
 ---
 
 ## Registry
 
-Annotation handlers are stored in a `Registry`. Choose the right constructor:
+A `Registry` holds the annotation handlers. Choose the right constructor:
 
 | Constructor                 | Semantics                                                                     |
 | --------------------------- | ----------------------------------------------------------------------------- |
-| `DefaultRegistry()`         | The package-level shared registry; `NewWithDefaults()` holds a live reference |
+| `DefaultRegistry()`         | The package-level shared registry. `NewWithDefaults()` holds a live reference |
 | `NewRegistryFromDefaults()` | Independent copy seeded from current `DefaultRegistry()` handlers             |
 | `NewEmptyRegistry()`        | Blank — no handlers, not even `"required"`                                    |
 
@@ -141,9 +141,9 @@ Annotation handlers are stored in a `Registry`. Choose the right constructor:
 | `NewFrom(reg)`      | snapshot copy of `reg`        | `(*Validator, error)` | error   |
 | `NewEmpty()`        | none                          | `*Validator`          | n/a     |
 
-**Live** means annotations added to the registry after construction are visible on the
-next `Validate()` call. **Snapshot** means the registry is copied at construction time —
-later changes to the source registry are invisible.
+**Live** means that an annotation added to the registry after construction is visible on
+the next `Validate()` call. **Snapshot** means that the constructor copies the registry. A
+later change to the source registry is then invisible.
 
 ```go
 // Simple apps: register globally once, all NewWithDefaults()-based validators see it.
@@ -164,10 +164,10 @@ reg.Register("nonempty", myHandler) // still visible to v
 
 ## Schema annotation validators
 
-`Schema[T]` reflects on `T`'s `kongfig` struct tags and extracts annotation options
-(anything after the first comma that isn't a structural option like `squash` or `redacted`).
-`AddSchema` stores the schema for lazy resolution at `Validate()` time — call order
-of `AddSchema` and `Registry.Register` does not matter.
+`Schema[T]` reflects on the `kongfig` struct tags of `T` and extracts the annotation
+options. An annotation option is anything after the first comma that is not a structural
+option like `squash` or `redacted`. `AddSchema` stores the schema for lazy resolution at
+`Validate()` time. The call order of `AddSchema` and `Registry.Register` does not matter.
 
 ```go
 type Config struct {
@@ -187,18 +187,18 @@ v.AddSchema(validation.Schema[Config]()) // stored for lazy resolution
 v.AddSchema(validation.Schema[DBConfig](kongfig.At("db")))
 ```
 
-Prepends `"db."` to all extracted paths.
+This option prepends `"db."` to every extracted path.
 
 ### Built-in annotations
 
 | Annotation | Effect                                                      |
 | ---------- | ----------------------------------------------------------- |
-| `required` | Missing-key check for the field; `Code: "kongfig.required"` |
+| `required` | Missing-key check for the field. `Code: "kongfig.required"` |
 
 ### Custom annotations
 
-Use `AnnotationFieldFunc` for the common field-scoped case — the framework resolves
-the field value and sets `Paths` on violations automatically:
+Use `AnnotationFieldFunc` for the common field-scoped case. Kongfig then resolves the
+field value and sets `Paths` on the violations:
 
 ```go
 reg := validation.NewRegistryFromDefaults()
@@ -229,8 +229,8 @@ v.AddSchema(validation.Schema[Config]())
 | Field    | Type       | Meaning                                                        |
 | -------- | ---------- | -------------------------------------------------------------- |
 | `Path`   | `string`   | Full dot-delimited config key                                  |
-| `Args`   | `[]string` | Expression arguments; nil for zero-arg atoms (e.g. `required`) |
-| `Value`  | `any`      | Current value at `Path`; only valid when `Exists` is true      |
+| `Args`   | `[]string` | Expression arguments. A zero-arg atom such as `required` gives nil |
+| `Value`  | `any`      | Current value at `Path`. Valid only when `Exists` is true      |
 | `Exists` | `bool`     | Whether `Path` is present in the merged config                 |
 
 `Args` reflects the validate= expression: `required` → `nil`, `min(1)` → `["1"]`,
@@ -248,26 +248,28 @@ b, ok  := validation.ParseParamBool(e.Args[0]) // parse first arg as boolean
 items  := validation.ParseParamList(e.Args[0]) // split pipe-separated list
 ```
 
-Unknown annotation tags surface as `SeverityError{Code: "kongfig.unknown_annotation"}`
-when `Validate()` is called, not silently dropped at `AddSchema` time.
+An unknown annotation tag surfaces as `SeverityError{Code: "kongfig.unknown_annotation"}`
+at the `Validate()` call. `AddSchema` does not drop it silently.
 
 ---
 
 ## OnLoad transactional semantics
 
-`OnLoad` hooks run on the **proposed** merged state before it is committed. If any hook returns a non-nil error, the load is rejected: `k.data`, `k.prov`, and `k.layers` are left unchanged. Inside a hook, `k.Raw()` returns the pre-load state; use `e.ProposedData` to inspect the post-merge view. Per-load field validators only fire for keys present in the current layer's data (`e.Layer.Data`), not all keys in the merged config — a stale bad value from a previous layer cannot cause a later, unrelated load to fail. `SeverityError` violations reject the load entirely; lower-severity violations accumulate in `Diagnostics.LoadViolations` for `Validate()` to surface.
+`OnLoad` hooks run on the **proposed** merged state before kongfig commits it. If any hook returns a non-nil error, kongfig rejects the load. `k.data`, `k.prov`, and `k.layers` then stay unchanged. Inside a hook, `k.Raw()` returns the pre-load state. Use `e.ProposedData` to read the post-merge view.
+
+A per-load field validator fires only for the keys in the current layer data (`e.Layer.Data`), and not for every key in the merged config. A stale bad value from an earlier layer therefore cannot make a later unrelated load fail. A `SeverityError` violation rejects the load entirely. A lower-severity violation accumulates in `Diagnostics.LoadViolations`, and `Validate()` surfaces it.
 
 ## ValidateOnLoad — global switch
 
-`WithValidateOnLoad(at Severity)` makes **all** field validators fire on every `Load()`.
-Violations at severity `at` or above cause `Load()` to return an error immediately;
-lower-severity violations are accumulated in `Diagnostics.LoadViolations`.
+`WithValidateOnLoad(at Severity)` makes **all** field validators fire on every `Load()`. A
+violation at severity `at` or higher makes `Load()` return an error immediately. A
+lower-severity violation accumulates in `Diagnostics.LoadViolations`.
 
 ```go
 v := validation.NewWithDefaults(validation.WithValidateOnLoad(validation.SeverityError))
 ```
 
-This is useful in strict environments where any invalid load should fail fast.
+This option fits a strict environment, where an invalid load must fail fast.
 
 ---
 
@@ -277,11 +279,10 @@ This is useful in strict environments where any invalid load should fail fast.
 v.Register(k)
 ```
 
-Installs an `OnLoad` hook on `k`. The hook only fires if `WithValidateOnLoad` was set
-at construction time.
-Calling `Register` on the same `k` more than once is a no-op — the hook is installed
-exactly once regardless.
-Call `Register` after all validators are added and before any `Load` calls.
+`Register` installs an `OnLoad` hook on `k`. The hook fires only when
+`WithValidateOnLoad` was set at construction time. A second `Register` call on the same `k`
+is a no-op, because kongfig installs the hook exactly once. Call `Register` after you add
+all the validators, and before any `Load` call.
 
 ---
 
@@ -291,11 +292,11 @@ Call `Register` after all validators are added and before any `Load` calls.
 d := v.Validate(k)
 ```
 
-Runs all validators (per-key, cross-key, required checks) against the current merged
-state of `k`. Also drains any per-load violations accumulated since the last `Validate`
-call, attaching them as `Diagnostics.LoadViolations`.
+`Validate` runs all the validators (per-key, cross-key, required checks) against the
+current merged state of `k`. It also drains the per-load violations that accumulated since
+the last `Validate` call, and attaches them as `Diagnostics.LoadViolations`.
 
-Returns `nil` when there are no violations of any severity.
+It returns `nil` when no violation of any severity exists.
 
 ---
 
@@ -317,10 +318,10 @@ func (d *Diagnostics) Err() error
 ### Source positions
 
 Every `Violation` carries `Paths []PathSource`, and each `PathSource` pairs the config path
-with the layer that last wrote it. `PathSource.Position()` returns where that path sits in
-its source document, or `nil` when the position is unavailable — no provenance, a source
-with no document (env, flags, defaults), or a parser that does not report positions
-(see [architecture.md](architecture.md#source-positions)).
+with the layer that last wrote it. `PathSource.Position()` returns the place of that path in
+its source document. It returns `nil` when the position is unavailable. Three causes exist:
+no provenance, a source with no document (env, flags, defaults), or a parser that does not
+report positions ([architecture.md](architecture.md#source-positions)).
 
 ```go
 for _, v := range diags.Violations {
@@ -334,16 +335,16 @@ for _, v := range diags.Violations {
 }
 ```
 
-Positions point at the **value**, which is where a rejected value sits. `Diagnostics.Err()`
-does not include them — its message format is unchanged; format your own message when you
-want the file/line/column.
+A position points at the **value**, because that is where a rejected value sits.
+`Diagnostics.Err()` does not include the positions, and its message format is unchanged.
+Format your own message when you want the file, the line and the column.
 
 ### Severity
 
 | Level             | `Err()` non-nil | Meaning                          |
 | ----------------- | --------------- | -------------------------------- |
 | `SeverityError`   | yes             | Config is unusable               |
-| `SeverityWarning` | no              | Should fix, but app can continue |
+| `SeverityWarning` | no              | You must correct this, but the application can continue |
 | `SeverityInfo`    | no              | Informational only               |
 | `SeverityHint`    | no              | Optional improvement suggestion  |
 

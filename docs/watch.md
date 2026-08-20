@@ -2,10 +2,10 @@
 
 ## Overview
 
-`Watch` enables live config reload without restarting the process. When a
-watched provider detects a change it reloads its data, merges it into the
-`Kongfig` instance, and fires your `OnChange` callbacks — all while the
-application keeps running.
+`Watch` reloads the config while the process runs. When a watched provider
+detects a change, it reloads its data. It then merges that data into the
+`Kongfig` instance, and fires your `OnChange` callbacks. The application keeps
+running throughout.
 
 ---
 
@@ -28,8 +28,8 @@ go kf.Watch(ctx)            // start watching in the background
 
 | Call             | Purpose                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------- |
-| `AddWatcher(wp)` | Register a `WatchProvider` to be started by `Watch`. Call once per provider before `Watch`. |
-| `OnChange(fn)`   | Register a callback invoked after every successful reload. Multiple callbacks are allowed.  |
+| `AddWatcher(wp)` | Register a `WatchProvider` for `Watch` to start. Call once per provider before `Watch`.    |
+| `OnChange(fn)`   | Register a callback that runs after every successful reload. Several callbacks are legal.   |
 | `Watch(ctx)`     | Start all registered watchers and block until `ctx` is canceled. Returns any watcher error. |
 
 `Watch` blocks, so run it in a goroutine (or your application's shutdown
@@ -60,9 +60,9 @@ func handleEvent(ev kongfig.WatchEvent) {
 }
 ```
 
-`kongfig.Watch` wires this up internally — you rarely call `WatchFunc`
-directly. Use `OnChange` for successful-reload reactions; the error case is
-available if you implement your own `WatchProvider`.
+`kongfig.Watch` wires this internally, and you rarely call `WatchFunc`
+directly. Use `OnChange` for a reaction to a successful reload. The error case
+is available when you implement your own `WatchProvider`.
 
 ---
 
@@ -79,18 +79,18 @@ type WatchProvider interface {
 
 Contract:
 
-- **Block until `ctx` is canceled.** `Watch` must not return early unless an
-  unrecoverable error occurs. Transient errors (e.g. a temporarily missing
-  file) should be delivered as `WatchErrorEvent` and allow the watch loop to
-  continue.
+- **Block until `ctx` is canceled.** `Watch` must not return early, except on
+  an unrecoverable error. Deliver a transient error as `WatchErrorEvent`, for
+  example a temporarily missing file. The watch loop must then continue.
 - **Call `cb(WatchDataEvent{Data: data})` on each successful reload.** `data`
   is the full `ConfigData` map for this provider's contribution (same shape as
   `Provider.Load` returns).
 - **Call `cb(WatchErrorEvent{Err: err})` on errors.** Do not return from
-  `Watch` for recoverable errors — deliver them via the callback and keep
-  watching.
-- **Return `nil` (or a meaningful error) when `ctx` is canceled.** Returning
-  `ctx.Err()` is acceptable; `kongfig.Watch` discards `context.Canceled`.
+  `Watch` for a recoverable error. Deliver that error through the callback, and
+  continue the watch.
+- **Return `nil` (or a meaningful error) when `ctx` is canceled.** A return of
+  `ctx.Err()` is acceptable, because `kongfig.Watch` discards
+  `context.Canceled`.
 
 Minimal skeleton:
 
@@ -116,12 +116,12 @@ func (p *MyProvider) Watch(ctx context.Context, cb kongfig.WatchFunc) error {
 
 ## File provider watch
 
-`providers/file` implements `WatchProvider` out of the box using
-[fsnotify](https://github.com/fsnotify/fsnotify). File modifications trigger
-an automatic reload and fire `OnChange` callbacks.
+`providers/file` implements `WatchProvider` by default with
+[fsnotify](https://github.com/fsnotify/fsnotify). A change to the file triggers
+an automatic reload, and fires the `OnChange` callbacks.
 
-Usage is the same as shown in the [Wiring up watch](#wiring-up-watch) section
-above — pass the file provider to both `MustLoad` and `AddWatcher`:
+The use is the same as the [Wiring up watch](#wiring-up-watch) section shows.
+Pass the file provider to both `MustLoad` and `AddWatcher`:
 
 ```go
 fp := fileprovider.New("config.yaml", yamlparser.Default)
@@ -129,16 +129,16 @@ kf.MustLoad(ctx, fp)
 kf.AddWatcher(fp)
 ```
 
-No extra setup is required. The watcher starts when `kf.Watch(ctx)` is called
-and stops when the context is canceled.
+No extra setup is necessary. The watcher starts at the `kf.Watch(ctx)` call,
+and it stops when the context is canceled.
 
 ---
 
 ## Derives and pipeline replay
 
-`Kongfig.Derive` registers a compute step that runs after one or more providers
-are loaded. On watch reload, the full **pipeline** is replayed from scratch so
-derived values are always recomputed from the latest provider data.
+`Kongfig.Derive` registers a compute step that runs after the load of one or
+more providers. On a watch reload, kongfig replays the full **pipeline** from
+the start. Every derived value therefore comes from the newest provider data.
 
 Given this setup:
 
@@ -164,10 +164,10 @@ When `providerA` reloads, the pipeline replays in registration order:
 3. **Re-run the derive** function against the merged A+B state (step 3)
 4. Merge providerC's stored snapshot (step 4)
 
-The derive at step 3 sees only the layers that precede it — providerC's data
-is not visible to the derive even though it appears later in the pipeline. This
-mirrors the semantics at initial load: each step sees the accumulated state of
-everything registered before it.
+The derive at step 3 sees only the layers before it. The data of providerC is
+invisible to the derive, because that provider comes later in the pipeline. The
+initial load has the same semantics. Each step sees the accumulated state of
+everything before it.
 
-OnLoad hooks fire against the fully replayed proposed state; if any hook returns
-an error the reload is rejected and the prior state is preserved.
+OnLoad hooks fire against the fully replayed proposed state. If any hook returns
+an error, kongfig rejects the reload and keeps the earlier state.

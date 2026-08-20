@@ -10,7 +10,7 @@ entry point for callers that already have a `map[string]any`.
 ```
 Kongfig.Load(ctx, provider, opts...)
   ├─ provider.Load(ctx)                   → map[string]any
-  ├─ provider.ProviderName()               → source label
+  ├─ provider.ProviderInfo()               → source label + kind
   ├─ collision detection (env.* sources)
   ├─ parser snapshot (ParserProvider)
   ├─ data snapshot (ProviderDataSupport)
@@ -28,14 +28,14 @@ Each loaded layer carries a `LayerMeta` struct with four fields:
 
 | Field       | Purpose                                                             | Example                        |
 | ----------- | ------------------------------------------------------------------- | ------------------------------ |
-| `Meta.ID`   | Unique per-Load stamp; ordering reflects load sequence              | `SourceID(3)`                  |
+| `Meta.ID`   | Unique per-Load stamp. The order reflects the load sequence         | `SourceID(3)`                  |
 | `Meta.Name` | Stable provenance label (source string passed at load time)         | `"xdg.yaml"`, `"env.tag"`      |
-| `Meta.Kind` | Provider category; set by the provider or derived via `inferKind()` | `"file"`, `"env"`              |
+| `Meta.Kind` | Provider category. Set by the provider, or derived via `inferKind()` | `"file"`, `"env"`             |
 | `Meta.Data` | Provider-specific annotation data (file path, env var name)         | `file.SourceData{Path: "..."}` |
 
-`Name` comes from `ProviderName()` (required on `Provider`); `Kind` is set explicitly by
-built-in providers and derived via `inferKind(name)` for custom providers; `Data` comes from
-`ProviderDataSupport` if the provider implements it.
+`Name` comes from `ProviderInfo()`, which `Provider` requires. Built-in providers set
+`Kind` explicitly. Custom providers get `Kind` from `inferKind(name)`. If the provider
+implements `ProviderDataSupport`, `Data` comes from that interface.
 
 ## LoadParsed options
 
@@ -52,35 +52,35 @@ built-in providers and derived via `inferKind(name)` for custom providers; `Data
 
 ## Merge strategy
 
-The merge is **last-writer-wins per leaf path**. Each `Load` call overwrites any existing value at the same dot-path; sub-maps are recursed into so sibling keys are preserved. Load order is the only thing that controls priority — later loads beat earlier ones. Array merging and other non-overwrite strategies require an explicit `SetMergeFunc` for the specific path.
+The merge is **last-writer-wins per leaf path**. Each `Load` call overwrites the existing value at the same dot-path. The merge descends into a sub-map, so the sibling keys survive. Load order is the only control over priority, and a later load beats an earlier one. An array merge, and every other non-overwrite strategy, needs an explicit `SetMergeFunc` for the specific path.
 
 ## Layer snapshots
 
-After each `Load`, a **deep clone of the provider's post-transform data** is stored as a `Layer` struct. The snapshot is taken before the merge into `k.data` and is never modified afterwards. This is what `--layers` displays — each source's full contribution independent of whether its values survived the merge. Re-loading providers on demand was rejected because providers may have side effects or already be closed.
+After each `Load`, kongfig stores a **deep clone of the post-transform data of the provider** as a `Layer` struct. Kongfig takes the snapshot before the merge into `k.data`, and never modifies it afterwards. `--layers` shows this snapshot. It is the full contribution of each source, whatever survived the merge. An on-demand reload of the providers was rejected, because a provider can have side effects, or can already be closed.
 
 ## Watch reload path
 
 On watch reload, `reloadEntry` replays the **full ordered pipeline** rather than
 appending a new layer:
 
-1. The reloaded provider's snapshot is updated with the new data.
-2. All pipeline entries are replayed in registration order:
-   - **Provider entries** are merged from their stored (post-transform) snapshot.
-   - **Derive entries** re-run their function against the accumulated state at
-     that position — they see only the layers registered _before_ them.
-3. OnLoad hooks fire against the proposed state; a hook error rejects the reload
-   and leaves the prior state unchanged.
-4. If all hooks pass, `k.data`, provenance, and the pipeline snapshot are
-   committed atomically.
+1. Kongfig updates the snapshot of the reloaded provider with the new data.
+2. Kongfig replays all the pipeline entries in registration order:
+   - A **provider entry** merges from its stored (post-transform) snapshot.
+   - A **derive entry** re-runs its function against the accumulated state at
+     that position. It sees only the layers registered _before_ it.
+3. OnLoad hooks fire against the proposed state. A hook error rejects the reload
+   and leaves the earlier state unchanged.
+4. If all the hooks pass, kongfig commits `k.data`, the provenance, and the
+   pipeline snapshot atomically.
 
-This ensures derived values are always consistent with the current provider data.
+Every derived value therefore matches the current provider data.
 See [Watch — Derives and pipeline replay](watch.md#derives-and-pipeline-replay)
 for an example.
 
 ## Source label conventions
 
-- Env providers: `env.<tag>` prefix (e.g. `env.tag`, `env.prefix`, `env.kong`)
-- File providers: `<discoverer>.<format>` (e.g. `xdg.yaml`, `workdir.toml`), Kind=`"file"`
+- Env providers: `env.<tag>` prefix, for example `env.tag`, `env.prefix`, `env.kong`
+- File providers: `<discoverer>.<format>`, for example `xdg.yaml` or `workdir.toml`, Kind=`"file"`
 - Flag providers: `flags`
 - Defaults: `defaults`
 - Derived/computed values: `derived`

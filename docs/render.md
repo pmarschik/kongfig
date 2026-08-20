@@ -3,7 +3,7 @@
 # render — Renderer Utilities
 
 The `render` sub-package (`github.com/pmarschik/kongfig/render`) provides shared
-utilities that **all renderer implementations** should import. It is the canonical home
+utilities that **all renderer implementations** must import. It is the canonical home
 for:
 
 - Value styling helpers (`Value`, `Annotation`)
@@ -12,8 +12,8 @@ for:
 - Context accessors for render options
 - Filter helpers (`MatchesFilterSource`, `BuildFilterSource`)
 
-Sub-packages that implement `kongfig.Renderer` must import `render` rather than
-re-implementing these helpers.
+A sub-package that implements `kongfig.Renderer` must import `render`, and must not
+implement these helpers again.
 
 ---
 
@@ -21,8 +21,8 @@ re-implementing these helpers.
 
 ### `render.Value(s Styler, v any, formatted string) string`
 
-Renders a leaf value using the appropriate `Styler` method. Always call this instead
-of `s.String(formatted)` directly on leaf values:
+Renders a leaf value with the correct `Styler` method. Always call this function on a leaf
+value, and never `s.String(formatted)`:
 
 ```go
 line := render.Value(s, v, formatted)
@@ -45,7 +45,7 @@ Renders the source annotation for a `RenderedValue`. Returns `""` when:
 - `render.NoProvenance(ctx)` is true — set by `WithRenderNoProvenance()` or the
   broader `WithRenderNoComments()`
 
-Always use this instead of formatting annotations inline:
+Always use this function, and never format an annotation inline:
 
 ```go
 if ann := render.Annotation(ctx, rv, path, s); ann != "" {
@@ -72,23 +72,23 @@ if align {
 
 ### `render.AnnMarkerFixed`
 
-A second sentinel byte (`\x01`) for a line whose annotation must stay on it, because the
-line above is not a place a comment may go. The line that closes a folded TOML multi-line
-string is one: a comment written above it lands inside the string, and the value the reader
-parses back is not the value that was rendered.
+A second sentinel byte (`\x01`) for a line whose annotation must stay on it. The line above
+is not a place where a comment can go. The line that closes a folded TOML
+multi-line string is one example. A comment above that line lands inside the string. The
+reader then parses back a value other than the rendered one.
 
 A fixed annotation aligns with the others when the alignment column has room for it, and
-follows its content directly when it does not. It is never lifted to a line of its own, and
-it never pulls the alignment column: only movable annotations get a say in where that
-column lands.
+follows its content directly when it does not. Kongfig never lifts it to a line of its own,
+and it never pulls the alignment column. Only a movable annotation decides where that column
+lands.
 
-Use it only where the above-line fallback would change the meaning of the output — a plain
+Use it only where the above-line fallback changes the meaning of the output. A plain
 `AnnMarker` is the right choice everywhere else.
 
 ### `render.AlignAnnotations(raw string, w io.Writer) error`
 
-Post-processes lines containing `AnnMarker`, padding each value segment to the same
-column before its annotation. Lines without the marker are written as-is.
+Post-processes every line that contains `AnnMarker`, and pads each value segment to the
+same column before its annotation. A line without the marker keeps its exact form.
 
 ```go
 var buf bytes.Buffer
@@ -101,8 +101,8 @@ return render.AlignAnnotations(buf.String(), w)
 ### `render.AlignAnnotationsCtx(ctx context.Context, raw string, w io.Writer) error`
 
 Like `AlignAnnotations` but reads the terminal width from `ctx` (set via `render.WithTTYSize`
-or `render.TTYSizeKey`). When a line cannot fit its annotation inline, that annotation is
-written as a comment line **above** the value line, indented to match:
+or `render.TTYSizeKey`). When a line cannot fit its annotation inline, the annotation goes
+on a comment line **above** the value line, with matching indentation:
 
 ```
 # from file.yaml
@@ -111,9 +111,9 @@ host: localhost
 port: 8080
 ```
 
-The decision is per line, not per document. The alignment column is chosen to keep as many
-annotations inline as it can, so one unusually wide line gives way on its own instead of
-pushing every annotation in the document above its value:
+The decision is per line, not per document. Kongfig picks the alignment column that keeps
+the most annotations inline. One unusually wide line therefore moves its annotation alone,
+and every other annotation in the document keeps its place beside its value:
 
 ```
 host = "localhost"                  # from file.yaml
@@ -122,9 +122,8 @@ port = 8080                         # from environment
 endpoint = "https://…very long…"
 ```
 
-Prefer `AlignAnnotationsCtx` over `AlignAnnotations` in renderer implementations that
-accept a `context.Context` — it degrades gracefully when no terminal size is set (falls
-back to inline alignment).
+Prefer `AlignAnnotationsCtx` over `AlignAnnotations` in a renderer that accepts a
+`context.Context`. With no terminal size set, it uses inline alignment instead.
 
 ```go
 var buf bytes.Buffer
@@ -136,8 +135,8 @@ return render.AlignAnnotationsCtx(ctx, buf.String(), w)
 
 ### `render.VisualWidth(s string) int`
 
-Returns the visible character width of `s`, stripping ANSI escape codes. Used
-internally by `AlignAnnotations` for accurate column measurement.
+Returns the visible character width of `s`, and it strips the ANSI escape codes.
+`AlignAnnotations` uses this function internally for an accurate column measurement.
 
 ---
 
@@ -145,9 +144,9 @@ internally by `AlignAnnotations` for accurate column measurement.
 
 ### `render.BaseStyler`
 
-A no-op `kongfig.Styler` implementation that returns every token unchanged. Embed it in
-custom `Styler` structs to inherit pass-through defaults and override only the methods
-you need:
+A no-op `kongfig.Styler` implementation that returns every token unchanged. Embed it in a
+custom `Styler` struct. Your struct then inherits the pass-through defaults, and it
+overrides only the methods that you need:
 
 ```go
 import "github.com/pmarschik/kongfig/render"
@@ -161,16 +160,17 @@ func (BoldKeyStyler) Key(s string) string { return "\033[1m" + s + "\033[0m" }
 
 ## Context accessors
 
-These read `RenderOption` values injected by `Kongfig.RenderWith` into the render context.
-Renderers should call these instead of reading raw context values directly.
+These functions read the `RenderOption` values that `Kongfig.RenderWith` injects into the
+render context. A renderer must call these functions, and must not read a raw context value
+directly.
 
 | Accessor                          | Returns               | Description                                        |
 | --------------------------------- | --------------------- | -------------------------------------------------- |
 | `render.NoComments(ctx)`          | `bool`                | True when `WithRenderNoComments()` is active       |
-| `render.NoProvenance(ctx)`        | `bool`                | True under `WithRenderNoProvenance()` or the above |
+| `render.NoProvenance(ctx)`        | `bool`                | True under `WithRenderNoProvenance()` or `NoComments` |
 | `render.NoHelp(ctx)`              | `bool`                | True under `WithRenderNoHelp()` or `NoComments`    |
 | `render.HelpTexts(ctx)`           | `map[string]string`   | Per-path help texts (`nil` when `NoHelp`)          |
-| `render.HelpText(ctx, path)`      | `string`              | Help text for path; prefix-matched, emitted once   |
+| `render.HelpText(ctx, path)`      | `string`              | Help text for the path. Prefix-matched, emitted once |
 | `render.AlignSources(ctx)`        | `bool`                | True (default) unless `WithRenderNoAlignSources()` |
 | `render.FileRawPaths(ctx)`        | `bool`                | True when `WithRenderFileRawPaths()` is active     |
 | `render.FieldNames(ctx)`          | `PathFieldNames`      | Path → SourceID → field name map                   |
@@ -180,11 +180,11 @@ Renderers should call these instead of reading raw context values directly.
 
 #### Help text rendering
 
-`render.HelpText(ctx, path)` should be called by renderers before emitting each key.
-It performs **prefix matching**: a help text registered for `"labels"` also fires for
-`"labels.key1"` and `"labels[0]"`. Each matched key is emitted **at most once per
-render call** — subsequent paths matched by the same key return `""`. Renderers should
-emit the result as a comment line above the key:
+A renderer must call `render.HelpText(ctx, path)` before it emits each key. The function
+does **prefix matching**. A help text for `"labels"` also fires for `"labels.key1"` and
+`"labels[0]"`. Kongfig emits each matched key **at most once per render call**, and a later
+path under the same key returns `""`. A renderer must emit the result as a comment line
+above the key:
 
 ```go
 if help := render.HelpText(ctx, path); help != "" {
@@ -195,8 +195,8 @@ if help := render.HelpText(ctx, path); help != "" {
 ### TTY size
 
 `render.WithTTYSize(cols, rows int)` injects terminal dimensions as a `RenderOption`.
-`AlignAnnotationsCtx` reads this automatically. Renderers that do their own line-wrapping
-can also access it directly:
+`AlignAnnotationsCtx` reads this automatically. A renderer that does its own line-wrapping
+can also read it directly:
 
 ```go
 tty, _ := render.TTYSizeKey.Read(ctx)
@@ -205,7 +205,7 @@ if tty.Cols > 0 {
 }
 ```
 
-Pass `(0, 0)` to explicitly clear a previously set size.
+Pass `(0, 0)` to clear a size that was set before.
 
 ---
 
@@ -214,8 +214,8 @@ Pass `(0, 0)` to explicitly clear a previously set size.
 ### `render.MatchesFilterSource(source string, filters []string) bool`
 
 Reports whether `source` passes the filter list. An empty list matches everything.
-`"no-<prefix>"` entries exclude; positive entries form an allowlist. Prefix matching:
-`"env"` matches `"env"`, `"env.tag"`, `"env.kong"`, etc.
+A `"no-<prefix>"` entry excludes, and a positive entry forms an allowlist. The match is a
+prefix match, so `"env"` matches `"env"`, `"env.tag"` and `"env.kong"`.
 
 ```go
 filters := render.FilterSourceFromCtx(ctx)
@@ -226,5 +226,5 @@ if !render.MatchesFilterSource(src, filters) {
 
 ### `render.BuildFilterSource(layers map[string]bool) []string`
 
-Builds a filter list from a `layerName → show` map. Layers with `show=false` become
-`"no-<name>"` entries.
+Builds a filter list from a `layerName → show` map. A layer with `show=false` becomes a
+`"no-<name>"` entry.

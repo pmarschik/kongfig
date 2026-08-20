@@ -203,9 +203,13 @@ type renderer struct {
 // tomlRenderOpts groups the layout options that are computed once per Render call
 // and shared across all recursive rendering functions.
 type tomlRenderOpts struct {
-	indent       string
-	inline       inlinePolicy
-	cols         int
+	indent string
+	inline inlinePolicy
+	cols   int
+	// annCols is the width the annotation of the entry being written needs on the
+	// line it rides, held back from the width a value inside that entry may fold
+	// into. Zero for an entry with no annotation.
+	annCols      int
 	forceBlock   bool
 	align        bool
 	omitNil      bool
@@ -475,21 +479,39 @@ func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k stri
 		return nil
 	}
 
-	if folded, ok := foldTOMLString(leafVal, isRV && rv.Redacted, pad+"  ", keyW+3, opts); ok {
-		line := pad + styledKey + " = " + render.Value(s, v, folded)
-		if isRV {
-			line += tomlAnnSuffix(ctx, rv, path, s, opts)
-		}
-		fmt.Fprintln(w, line)
+	ann := ""
+	if isRV {
+		ann = tomlAnnSuffix(ctx, rv, path, s, opts)
+	}
+
+	// A folded string ends its last line with the closing quotes, and that is the
+	// only line a comment may follow: past a line-ending backslash a "#" is
+	// content, not a comment. So the fold is what has to leave room for the
+	// annotation — held back on every line, which also keeps the block clear of
+	// the column the annotations align on — and the annotation is pinned to that
+	// last line, since every other line of the value is inside the string.
+	if folded, ok := foldTOMLString(leafVal, isRV && rv.Redacted, pad+"  ", keyW+3, holdBack(opts, ann)); ok {
+		writeFoldedLeaf(w, pad+styledKey+" = "+render.Value(s, v, folded), ann, pad, opts)
 		return nil
 	}
 
-	line := pad + styledKey + " = " + render.Value(s, v, inline)
-	if isRV {
-		line += tomlAnnSuffix(ctx, rv, path, s, opts)
-	}
-	fmt.Fprintln(w, line)
+	fmt.Fprintln(w, pad+styledKey+" = "+render.Value(s, v, inline)+ann)
 	return nil
+}
+
+// writeFoldedLeaf writes an entry whose value folded across lines, with its
+// annotation pinned to the closing line. When even that line has no room for it,
+// the annotation goes above the entry, outside the string, where a comment is a
+// comment rather than string content.
+func writeFoldedLeaf(w io.Writer, entry, ann, pad string, opts tomlRenderOpts) {
+	if opts.cols > 0 && render.VisualWidth(lastLine(entry))+annWidth(ann) > opts.cols {
+		if ann != "" {
+			fmt.Fprintln(w, pad+bareAnn(ann))
+		}
+		fmt.Fprintln(w, entry)
+		return
+	}
+	fmt.Fprintln(w, entry+pinAnn(ann))
 }
 
 // foldTOMLString breaks a string too wide for the terminal across lines as a TOML
@@ -506,6 +528,10 @@ func renderTOMLScalar(ctx context.Context, w io.Writer, s kongfig.Styler, k stri
 // startCol is the column the value starts at and contIndent the indentation the
 // lines below it carry, so the same fold serves a key/value line and an element of
 // an expanded array.
+//
+// Whether to fold is decided against the whole terminal: a value that fits its
+// line keeps it, annotation or not. The width the fold is packed into is
+// opts.annCols narrower, so the entry's annotation has a line to ride.
 func foldTOMLString(leafVal any, redacted bool, contIndent string, startCol int, opts tomlRenderOpts) (string, bool) {
 	str, isStr := leafVal.(string)
 	if !isStr || redacted || opts.cols <= 0 {
@@ -521,7 +547,13 @@ func foldTOMLString(leafVal any, redacted bool, contIndent string, startCol int,
 	body := strings.TrimSuffix(strings.TrimPrefix(quoted, `"`), `"`)
 	// Three columns are held back on every line: what the last one spends on the
 	// closing delimiter, and two to spare on the others past their backslash.
-	lines := packFoldChunks(foldChunks(body), opts.cols-startCol-3, opts.cols-len(contIndent)-3)
+	avail := opts.cols - opts.annCols
+	if avail-len(contIndent)-3 < 1 {
+		// No room left to fold in: a comment beside the value is worth less than
+		// a value the reader can follow.
+		avail = opts.cols
+	}
+	lines := packFoldChunks(foldChunks(body), avail-startCol-3, avail-len(contIndent)-3)
 	if len(lines) < 2 {
 		return "", false
 	}
@@ -578,7 +610,10 @@ func renderTOMLArrayBlock(ctx context.Context, w io.Writer, s kongfig.Styler, st
 		ann = tomlAnnSuffix(ctx, rv, path, s, opts)
 	}
 	fmt.Fprintf(w, "%s%s = [%s\n", pad, styledKey, ann)
-	for _, line := range arrayElemLines(s, leafVal, pad+"  ", opts) {
+	// The annotation rides the bracket, but an element folded across lines below it
+	// is part of the same entry: held to the same width, the block reads as one
+	// thing with a comment beside it.
+	for _, line := range arrayElemLines(s, leafVal, pad+"  ", holdBack(opts, ann)) {
 		fmt.Fprintln(w, line)
 	}
 	fmt.Fprintf(w, "%s]\n", pad)
@@ -784,6 +819,47 @@ func colsLess(opts tomlRenderOpts, n int) tomlRenderOpts {
 		opts.cols -= n
 	}
 	return opts
+}
+
+// pinAnn keeps the annotation on the line it was written on. The aligner lifts an
+// annotation that does not fit to the line above, which for the line that closes a
+// folded string is a line inside the string: the comment would become part of the
+// value.
+func pinAnn(ann string) string {
+	return strings.Replace(ann, render.AnnMarker, render.AnnMarkerFixed, 1)
+}
+
+// bareAnn is the annotation as a comment of its own: the aligner's marker gone,
+// and the gap it left before the content it followed trimmed off.
+func bareAnn(ann string) string {
+	bare := strings.ReplaceAll(ann, render.AnnMarker, "")
+	return strings.TrimLeft(strings.ReplaceAll(bare, render.AnnMarkerFixed, ""), " ")
+}
+
+// annWidth is the width a trailing annotation adds to the line it rides: the gap
+// before it and the comment itself.
+func annWidth(ann string) int {
+	if ann == "" {
+		return 0
+	}
+	return render.VisualWidth(bareAnn(ann)) + 2
+}
+
+// holdBack returns opts with the room the trailing annotation ann needs reserved
+// for it, so a value folded inside the entry leaves the annotation a line to ride.
+// A reserve that would take more than half the line back is not a trade worth
+// making: a value the reader can follow beats a comment beside it.
+func holdBack(opts tomlRenderOpts, ann string) tomlRenderOpts {
+	if ann == "" || opts.cols <= 0 || 2*annWidth(ann) > opts.cols {
+		return opts
+	}
+	opts.annCols = annWidth(ann)
+	return opts
+}
+
+// lastLine is the last line of a value that may have been folded across several.
+func lastLine(text string) string {
+	return text[strings.LastIndex(text, "\n")+1:]
 }
 
 // isRedacted reports whether v stands in for a value it hides.

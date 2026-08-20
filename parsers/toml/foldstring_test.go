@@ -139,3 +139,76 @@ func TestRender_FoldedString_LeavesRedactedAlone(t *testing.T) {
 		t.Errorf("redacted placeholder was folded:\n%s", out)
 	}
 }
+
+// The closing line is the only line the annotation may follow, so the fold has to
+// leave room for it there: a fold packed to the full width would push the
+// provenance onto a line of its own above the entry.
+func TestRender_FoldedString_LeavesRoomForTheAnnotation(t *testing.T) {
+	data := kongfig.ConfigData{"description": sourced(longDescription, "file (~/.config/app.toml)")}
+
+	ctx := render.WithTTYSizeCtx(context.Background(), 80, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(lines[len(lines)-1], "# file (~/.config/app.toml)") {
+		t.Errorf("annotation did not stay on the entry:\n%s", out)
+	}
+	for _, line := range lines {
+		if w := render.VisualWidth(line); w > 80 {
+			t.Errorf("line runs past the terminal (%d cols): %q", w, line)
+		}
+	}
+	if back, err := tomlparser.Default.Unmarshal([]byte(out)); err != nil {
+		t.Fatalf("folded string did not reparse: %v\n%s", err, out)
+	} else if back["description"] != longDescription {
+		t.Errorf("reparsed value = %q, want the original\n%s", back["description"], out)
+	}
+}
+
+// The annotation rides the opening bracket, and the elements below it belong to
+// the same entry: they are folded to the same width, so the block stays clear of
+// the column the annotation sits in.
+func TestRender_ArrayBlock_FoldedElementStaysClearOfTheAnnotation(t *testing.T) {
+	data := kongfig.ConfigData{"remove": sourced([]any{longDescription}, "file ($xdg)")}
+
+	ctx := render.WithTTYSizeCtx(context.Background(), 60, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	annCol := strings.Index(lines[0], "# file ($xdg)")
+	if annCol < 0 {
+		t.Fatalf("annotation is not beside the bracket:\n%s", out)
+	}
+	for _, line := range lines[1:] {
+		if w := render.VisualWidth(line); w > annCol {
+			t.Errorf("element line reaches into the annotation column (%d > %d): %q", w, annCol, line)
+		}
+	}
+}
+
+// The lines of a folded string are the value; a comment written above the line
+// that closes it is string content, and the document reparses to something else.
+// So the annotation of a folded string is pinned to that line however narrow the
+// terminal, even at the cost of the alignment column.
+func TestRender_FoldedString_AnnotationIsNeverLiftedIntoTheString(t *testing.T) {
+	data := kongfig.ConfigData{
+		"description": sourced(longDescription, "file (~/.config/a-long-file-name.toml)"),
+		"short":       sourced("x", "defaults"),
+	}
+
+	ctx := render.WithTTYSizeCtx(context.Background(), 60, 0)
+	out := renderPlain(ctx, t, tomlparser.Default, data)
+
+	if !strings.Contains(out, "# file (~/.config/a-long-file-name.toml)") {
+		t.Errorf("the folded entry lost its provenance:\n%s", out)
+	}
+	// A comment the reader sees is a comment the parser skips; one that landed
+	// inside the string is part of the value instead.
+	back, err := tomlparser.Default.Unmarshal([]byte(out))
+	if err != nil {
+		t.Fatalf("rendered document did not reparse: %v\n%s", err, out)
+	}
+	if back["description"] != longDescription {
+		t.Errorf("reparsed value = %q, want the original\n%s", back["description"], out)
+	}
+}

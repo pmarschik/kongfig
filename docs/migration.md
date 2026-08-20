@@ -59,12 +59,12 @@ k.AddRename("database.host", "db.host", strictPolicy)
 
 Built-in handlers:
 
-| Handler           | Behavior                    |
-| ----------------- | --------------------------- |
-| `MigrationSilent` | no-op                       |
-| `MigrationDebug`  | `slog.LevelDebug`           |
-| `MigrationInfo`   | `slog.LevelInfo`            |
-| `MigrationWarn`   | `slog.LevelWarn`            |
+| Handler           | Behavior                       |
+| ----------------- | ------------------------------ |
+| `MigrationSilent` | no-op                          |
+| `MigrationDebug`  | `slog.LevelDebug`              |
+| `MigrationInfo`   | `slog.LevelInfo`               |
+| `MigrationWarn`   | `slog.LevelWarn`               |
 | `MigrationFail`   | returns an error. `Load` fails |
 
 ## Deprecated File Locations

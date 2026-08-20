@@ -100,22 +100,22 @@ func (BoldKeyStyler) Key(s string) string { return "\033[1m" + s + "\033[0m" }
 
 ### Styler method reference
 
-| Method               | Called for                                                        |
-| -------------------- | ----------------------------------------------------------------- |
-| `Key(s)`             | Config key tokens                                                 |
-| `String(s)`          | String leaf values                                                |
-| `Number(s)`          | Integer and float leaf values                                     |
-| `Bool(s)`            | Boolean leaf values (`true` / `false`)                            |
-| `Null(s)`            | Null / nil leaf values                                            |
-| `BraceOpen(s)`       | Opening bracket (`{`, `[`)                                        |
-| `BraceClose(s)`      | Closing bracket (`}`, `]`)                                        |
-| `Comment(s)`         | Comment prefix tokens                                             |
+| Method               | Called for                                                            |
+| -------------------- | --------------------------------------------------------------------- |
+| `Key(s)`             | Config key tokens                                                     |
+| `String(s)`          | String leaf values                                                    |
+| `Number(s)`          | Integer and float leaf values                                         |
+| `Bool(s)`            | Boolean leaf values (`true` / `false`)                                |
+| `Null(s)`            | Null / nil leaf values                                                |
+| `BraceOpen(s)`       | Opening bracket (`{`, `[`)                                            |
+| `BraceClose(s)`      | Closing bracket (`}`, `]`)                                            |
+| `Comment(s)`         | Comment prefix tokens                                                 |
 | `Annotation(src, s)` | Source annotation text. Legacy — prefer `SourceKind` and `SourceData` |
 | `SourceKind(s)`      | Kind token in a structured source annotation, such as `file` or `env` |
-| `SourceData(s)`      | Path or data segment of a structured source annotation            |
+| `SourceData(s)`      | Path or data segment of a structured source annotation                |
 | `SourceKey(s)`       | Specific key reference, such as `$APP_HOST` or `--log-level`          |
-| `Redacted(s)`        | Redacted value placeholder (`<redacted>`)                         |
-| `Codec(s)`           | Values encoded by a registered `Codec`                            |
+| `Redacted(s)`        | Redacted value placeholder (`<redacted>`)                             |
+| `Codec(s)`           | Values encoded by a registered `Codec`                                |
 
 ### Renderer conventions
 

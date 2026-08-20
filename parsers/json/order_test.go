@@ -23,7 +23,8 @@ func TestJSONMarshalCtx_RoundTripsDocumentOrder(t *testing.T) {
 	}
 
 	out, err := jsonparser.Default.MarshalCtx(
-		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data)
+		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data,
+	)
 	if err != nil {
 		t.Fatal("marshal:", err)
 	}
@@ -39,7 +40,8 @@ func TestJSONMarshalCtx_CompactFollowsOrder(t *testing.T) {
 	order := map[string][]string{"": {"zebra", "apple"}, "apple": {"b", "a"}}
 
 	out, err := jsonparser.Compact.MarshalCtx(
-		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data)
+		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data,
+	)
 	if err != nil {
 		t.Fatal("marshal:", err)
 	}
@@ -55,7 +57,8 @@ func TestJSONMarshalCtx_PartialOrderKeepsEveryKey(t *testing.T) {
 
 	out, err := jsonparser.Compact.MarshalCtx(
 		kongfig.WithRenderKeyOrderCtx(context.Background(),
-			map[string][]string{"": {"zebra"}}), data)
+			map[string][]string{"": {"zebra"}}), data,
+	)
 	if err != nil {
 		t.Fatal("marshal:", err)
 	}
@@ -100,7 +103,8 @@ func TestJSONMarshalCtx_OrderedWalkHandlesEveryShape(t *testing.T) {
 	order := map[string][]string{"": {"list", "empty", "deep"}}
 
 	out, err := jsonparser.Default.MarshalCtx(
-		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data)
+		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data,
+	)
 	if err != nil {
 		t.Fatal("marshal:", err)
 	}

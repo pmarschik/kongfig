@@ -28,7 +28,7 @@ go kf.Watch(ctx)            // start watching in the background
 
 | Call             | Purpose                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------- |
-| `AddWatcher(wp)` | Register a `WatchProvider` for `Watch` to start. Call once per provider before `Watch`.    |
+| `AddWatcher(wp)` | Register a `WatchProvider` for `Watch` to start. Call once per provider before `Watch`.     |
 | `OnChange(fn)`   | Register a callback that runs after every successful reload. Several callbacks are legal.   |
 | `Watch(ctx)`     | Start all registered watchers and block until `ctx` is canceled. Returns any watcher error. |
 

@@ -164,19 +164,19 @@ These functions read the `RenderOption` values that `Kongfig.RenderWith` injects
 render context. A renderer must call these functions, and must not read a raw context value
 directly.
 
-| Accessor                          | Returns               | Description                                        |
-| --------------------------------- | --------------------- | -------------------------------------------------- |
-| `render.NoComments(ctx)`          | `bool`                | True when `WithRenderNoComments()` is active       |
+| Accessor                          | Returns               | Description                                           |
+| --------------------------------- | --------------------- | ----------------------------------------------------- |
+| `render.NoComments(ctx)`          | `bool`                | True when `WithRenderNoComments()` is active          |
 | `render.NoProvenance(ctx)`        | `bool`                | True under `WithRenderNoProvenance()` or `NoComments` |
-| `render.NoHelp(ctx)`              | `bool`                | True under `WithRenderNoHelp()` or `NoComments`    |
-| `render.HelpTexts(ctx)`           | `map[string]string`   | Per-path help texts (`nil` when `NoHelp`)          |
-| `render.HelpText(ctx, path)`      | `string`              | Help text for the path. Prefix-matched, emitted once |
-| `render.AlignSources(ctx)`        | `bool`                | True (default) unless `WithRenderNoAlignSources()` |
-| `render.FileRawPaths(ctx)`        | `bool`                | True when `WithRenderFileRawPaths()` is active     |
-| `render.FieldNames(ctx)`          | `PathFieldNames`      | Path → SourceID → field name map                   |
-| `render.FieldName(ctx, path)`     | `string`              | Field name for path in the current source          |
-| `render.VerboseSources(ctx)`      | `map[string][]string` | Per-path verbose source list                       |
-| `render.FilterSourceFromCtx(ctx)` | `[]string`            | Effective filter source list from context          |
+| `render.NoHelp(ctx)`              | `bool`                | True under `WithRenderNoHelp()` or `NoComments`       |
+| `render.HelpTexts(ctx)`           | `map[string]string`   | Per-path help texts (`nil` when `NoHelp`)             |
+| `render.HelpText(ctx, path)`      | `string`              | Help text for the path. Prefix-matched, emitted once  |
+| `render.AlignSources(ctx)`        | `bool`                | True (default) unless `WithRenderNoAlignSources()`    |
+| `render.FileRawPaths(ctx)`        | `bool`                | True when `WithRenderFileRawPaths()` is active        |
+| `render.FieldNames(ctx)`          | `PathFieldNames`      | Path → SourceID → field name map                      |
+| `render.FieldName(ctx, path)`     | `string`              | Field name for path in the current source             |
+| `render.VerboseSources(ctx)`      | `map[string][]string` | Per-path verbose source list                          |
+| `render.FilterSourceFromCtx(ctx)` | `[]string`            | Effective filter source list from context             |
 
 #### Help text rendering
 

@@ -39,8 +39,8 @@ No `--layers` flag. Renders the single merged map.
 
 | Flags             | Behavior                                                                                                                                                          |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _(none)_          | Merged config. The format comes from the registered parsers (first registered, or YAML if none). Each value gets an inline `# source` annotation.                  |
-| `--format=X`      | Force a specific output format (yaml/toml/json/env/flags). Overrides the inferred default. Not meaningful in `--layers` mode (each layer uses its native format).  |
+| _(none)_          | Merged config. The format comes from the registered parsers (first registered, or YAML if none). Each value gets an inline `# source` annotation.                 |
+| `--format=X`      | Force a specific output format (yaml/toml/json/env/flags). Overrides the inferred default. Not meaningful in `--layers` mode (each layer uses its native format). |
 | `--no-comments`   | Suppress every comment: the help texts and the source annotations.                                                                                                |
 | `--no-provenance` | Suppress the source annotations, and keep the help comments. Merged view only — rejected together with `--layers`.                                                |
 | `--no-help`       | Suppress the help comments, and keep the source annotations.                                                                                                      |

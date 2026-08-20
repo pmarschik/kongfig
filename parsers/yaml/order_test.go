@@ -23,7 +23,8 @@ func TestYAMLMarshalCtx_RoundTripsDocumentOrder(t *testing.T) {
 	}
 
 	out, err := yamlparser.Default.MarshalCtx(
-		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data)
+		kongfig.WithRenderKeyOrderCtx(context.Background(), order), data,
+	)
 	if err != nil {
 		t.Fatal("marshal:", err)
 	}
@@ -39,7 +40,8 @@ func TestYAMLMarshalCtx_PartialOrderKeepsEveryKey(t *testing.T) {
 
 	out, err := yamlparser.Default.MarshalCtx(
 		kongfig.WithRenderKeyOrderCtx(context.Background(),
-			map[string][]string{"": {"zebra"}}), data)
+			map[string][]string{"": {"zebra"}}), data,
+	)
 	if err != nil {
 		t.Fatal("marshal:", err)
 	}

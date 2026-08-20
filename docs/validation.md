@@ -6,15 +6,15 @@ with configurable per-load or post-load execution.
 
 ## Concepts
 
-| Concept              | What it does                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------- |
+| Concept              | What it does                                                                              |
+| -------------------- | ----------------------------------------------------------------------------------------- |
 | `Validator`          | Central registry that accumulates validator definitions and wires into `*kongfig.Kongfig` |
-| `AddValidator`       | Per-key validation: fires for one dot-path                                            |
-| `Rule[T]`            | Cross-key validation: decodes a typed projection struct and validates relationships   |
-| `Schema[T]`          | Annotation-driven validation: reads `kongfig` struct tags to install validators       |
-| `RegisterAnnotation` | Extend the annotation system with custom tag options                                  |
-| `Severity`           | `Error` / `Warning` / `Info` / `Hint` — only `Error` causes `Err()` to return non-nil |
-| `Diagnostics`        | Bag of violations from `Validate()`. Call `.Err()` for a plain `error`                |
+| `AddValidator`       | Per-key validation: fires for one dot-path                                                |
+| `Rule[T]`            | Cross-key validation: decodes a typed projection struct and validates relationships       |
+| `Schema[T]`          | Annotation-driven validation: reads `kongfig` struct tags to install validators           |
+| `RegisterAnnotation` | Extend the annotation system with custom tag options                                      |
+| `Severity`           | `Error` / `Warning` / `Info` / `Hint` — only `Error` causes `Err()` to return non-nil     |
+| `Diagnostics`        | Bag of violations from `Validate()`. Call `.Err()` for a plain `error`                    |
 
 ---
 
@@ -226,12 +226,12 @@ v.AddSchema(validation.Schema[Config]())
 
 `AnnotationEvent` fields:
 
-| Field    | Type       | Meaning                                                        |
-| -------- | ---------- | -------------------------------------------------------------- |
-| `Path`   | `string`   | Full dot-delimited config key                                  |
+| Field    | Type       | Meaning                                                            |
+| -------- | ---------- | ------------------------------------------------------------------ |
+| `Path`   | `string`   | Full dot-delimited config key                                      |
 | `Args`   | `[]string` | Expression arguments. A zero-arg atom such as `required` gives nil |
-| `Value`  | `any`      | Current value at `Path`. Valid only when `Exists` is true      |
-| `Exists` | `bool`     | Whether `Path` is present in the merged config                 |
+| `Value`  | `any`      | Current value at `Path`. Valid only when `Exists` is true          |
+| `Exists` | `bool`     | Whether `Path` is present in the merged config                     |
 
 `Args` reflects the validate= expression: `required` → `nil`, `min(1)` → `["1"]`,
 `oneof(a b c)` → `["a", "b", "c"]`.
@@ -341,12 +341,12 @@ Format your own message when you want the file, the line and the column.
 
 ### Severity
 
-| Level             | `Err()` non-nil | Meaning                          |
-| ----------------- | --------------- | -------------------------------- |
-| `SeverityError`   | yes             | Config is unusable               |
+| Level             | `Err()` non-nil | Meaning                                                 |
+| ----------------- | --------------- | ------------------------------------------------------- |
+| `SeverityError`   | yes             | Config is unusable                                      |
 | `SeverityWarning` | no              | You must correct this, but the application can continue |
-| `SeverityInfo`    | no              | Informational only               |
-| `SeverityHint`    | no              | Optional improvement suggestion  |
+| `SeverityInfo`    | no              | Informational only                                      |
+| `SeverityHint`    | no              | Optional improvement suggestion                         |
 
 ---
 

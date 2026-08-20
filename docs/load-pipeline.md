@@ -26,12 +26,12 @@ Kongfig.Load(ctx, provider, opts...)
 
 Each loaded layer carries a `LayerMeta` struct with four fields:
 
-| Field       | Purpose                                                             | Example                        |
-| ----------- | ------------------------------------------------------------------- | ------------------------------ |
-| `Meta.ID`   | Unique per-Load stamp. The order reflects the load sequence         | `SourceID(3)`                  |
-| `Meta.Name` | Stable provenance label (source string passed at load time)         | `"xdg.yaml"`, `"env.tag"`      |
-| `Meta.Kind` | Provider category. Set by the provider, or derived via `inferKind()` | `"file"`, `"env"`             |
-| `Meta.Data` | Provider-specific annotation data (file path, env var name)         | `file.SourceData{Path: "..."}` |
+| Field       | Purpose                                                              | Example                        |
+| ----------- | -------------------------------------------------------------------- | ------------------------------ |
+| `Meta.ID`   | Unique per-Load stamp. The order reflects the load sequence          | `SourceID(3)`                  |
+| `Meta.Name` | Stable provenance label (source string passed at load time)          | `"xdg.yaml"`, `"env.tag"`      |
+| `Meta.Kind` | Provider category. Set by the provider, or derived via `inferKind()` | `"file"`, `"env"`              |
+| `Meta.Data` | Provider-specific annotation data (file path, env var name)          | `file.SourceData{Path: "..."}` |
 
 `Name` comes from `ProviderInfo()`, which `Provider` requires. Built-in providers set
 `Kind` explicitly. Custom providers get `Kind` from `inferKind(name)`. If the provider

@@ -123,6 +123,41 @@ func TestRender_FoldedString_AnnotationFollowsTheClosingDelimiter(t *testing.T) 
 	}
 }
 
+// The annotation can only ride the line that closes the string: a line-ending
+// backslash cannot carry a comment, and an annotation the aligner cannot fit goes
+// above its line — which for a folded string is a line inside the string, where the
+// backslash above it swallows the comment into the value. So the fold has to leave
+// the annotation room on its closing line, at every terminal width.
+func TestRender_FoldedString_KeepsTheAnnotationOnTheClosingLine(t *testing.T) {
+	data := kongfig.ConfigData{"description": sourced(longDescription, "workdir-config-file")}
+
+	for cols := 48; cols <= 96; cols++ {
+		ctx := render.WithTTYSizeCtx(context.Background(), cols, 0)
+		out := renderPlain(ctx, t, tomlparser.Default, data)
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+
+		for _, line := range lines {
+			if render.VisualWidth(line) > cols {
+				t.Errorf("cols=%d: line runs past the terminal (%d cols): %q",
+					cols, render.VisualWidth(line), line)
+			}
+		}
+		if last := lines[len(lines)-1]; !strings.Contains(last, `"""`) ||
+			!strings.Contains(last, "# workdir-config-file") {
+			t.Errorf("cols=%d: annotation is not on the closing line:\n%s", cols, out)
+		}
+
+		back, err := tomlparser.Default.Unmarshal([]byte(out))
+		if err != nil {
+			t.Fatalf("cols=%d: folded string did not reparse: %v\n%s", cols, err, out)
+		}
+		if back["description"] != longDescription {
+			t.Errorf("cols=%d: reparsed value = %q, want the original\n%s",
+				cols, back["description"], out)
+		}
+	}
+}
+
 // A redacted value carries a placeholder, not the value it hides; folding it
 // would fold the placeholder.
 func TestRender_FoldedString_LeavesRedactedAlone(t *testing.T) {

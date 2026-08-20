@@ -103,7 +103,8 @@ func TestKeySort_ComparatorOverridesTag(t *testing.T) {
 				return keys
 			}
 			return []string{"gamma", "alpha", "beta"}
-		}))
+		},
+	))
 	assertOrder(t, out, "[rules.gamma]", "[rules.alpha]", "[rules.beta]")
 }
 
@@ -114,7 +115,8 @@ func TestKeySort_PassthroughComparatorKeepsTagOrder(t *testing.T) {
 	loadTOML(t, kf, "file", rulesTOML)
 
 	out := renderTOML(t, kf, kongfig.WithRenderKeySort(
-		func(_ string, keys []string, _ kongfig.ConfigData) []string { return keys }))
+		func(_ string, keys []string, _ kongfig.ConfigData) []string { return keys },
+	))
 	assertOrder(t, out, "[rules.beta]", "[rules.gamma]", "[rules.alpha]")
 }
 

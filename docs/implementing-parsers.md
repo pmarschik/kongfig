@@ -21,6 +21,7 @@ Every parser **should** also implement:
 | `kongfig.KeyOrderParser` | `UnmarshalWithKeyOrder([]byte) (ConfigData, map[string][]string, error)` | Preserve document key order for rendering via `file.Provider.KeyOrder()` |
 | `kongfig.DocumentParser` | `UnmarshalDocument([]byte) (ConfigData, DocumentMeta, error)`            | Key order **and** per-path source positions from a single parse          |
 | `kongfig.CtxMarshaler`   | `MarshalCtx(context.Context, ConfigData) ([]byte, error)`                | Marshal that honours the render options in ctx, key order above all      |
+| `kongfig.DocumentEditor` | `EditDocument([]byte, ConfigData) ([]byte, error)`                       | Rewrite a document in place, keeping comments, key order and layout      |
 
 Without `KeyOrderParser`, rendering falls back to struct field order (from `NewFor[T]`) or
 alphabetical. Implement it if your format's text encoding has a meaningful key order — the
@@ -43,6 +44,7 @@ var (
     _ kongfig.KeyOrderParser  = Parser{}
     _ kongfig.DocumentParser  = Parser{}
     _ kongfig.CtxMarshaler    = Parser{}
+    _ kongfig.DocumentEditor  = Parser{}
 )
 ```
 
@@ -80,6 +82,43 @@ if src, ok := kf.SourceFor("db.port"); ok {
     }
 }
 ```
+
+### In-place editing (`DocumentEditor`)
+
+`Marshal` writes a document; `EditDocument` changes one. A program that maintains a user's
+config file needs the second: the comments, key order, indentation and quoting the user
+wrote have to survive a one-value change. Implement it when the format has a hand-written
+layout worth keeping — `parsers/toml` and `parsers/yaml` do, `parsers/json` does not.
+
+```go
+func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error)
+```
+
+Four rules:
+
+- **`want` is the whole document, not a patch.** A key it does not mention is a key the
+  rewrite removes. Callers get `want` by parsing the document and editing the data.
+- **Change only the text the data change touches.** Compare against the parsed document
+  (`kongfig.EqualValues` compares values, not the Go types that spell them) and leave
+  everything that did not change alone — rewriting an unchanged value would reformat it.
+- **Refuse what the format cannot express as an edit of _this_ document**, rather than
+  guessing: a new TOML key whose value needs a section the file does not have, a YAML value
+  spread over several lines, a mapping that merges another one. Return an error, write
+  nothing, and let the caller fall back to `Marshal`.
+- **Collect the edits, then splice.** Applying byte ranges from the back keeps every offset
+  measured against the document it was read from, and a refusal halfway through leaves the
+  document untouched.
+
+Callers reach it through `kongfig.EditDocument`, which parses the result and compares it
+against `want` before handing the bytes over (`ErrEditNotVerified` when it does not match,
+`ErrNoDocumentEditor` when the parser has no editor). Do not skip that wrapper in your own
+tests: text surgery is only as safe as its verification.
+
+Both built-in editors work from positions rather than from a re-render — `parsers/yaml`
+reads them off `yaml.Node`, `parsers/toml` has its own scanner (`parsers/toml/scan.go`)
+because `github.com/BurntSushi/toml` does not report them. Whichever it is, the scan must be
+string-literal aware: a `#` or `=` inside a quoted value is text, not syntax, and an editor
+that reads it as syntax rewrites the wrong bytes.
 
 ## Renderer checklist
 

@@ -328,6 +328,36 @@ depends on terminal width.
 See [docs/render-pipeline.md](docs/render-pipeline.md#toml-layout) and
 [docs/struct-tags.md](docs/struct-tags.md#inline-option).
 
+## Editing a config file in place
+
+A program that changes a user's config file — adding a pattern to a list, pointing a
+path somewhere else — should hand it back with the comments, key order and layout the
+user wrote. `kongfig.EditDocument` rewrites only the text the data change touches:
+
+```go
+data, _ := tomlparser.Default.Unmarshal(src)
+data["archive"] = append(data["archive"].([]any), "*.bak")
+
+out, err := kongfig.EditDocument(tomlparser.Default, src, data)
+if errors.Is(err, kongfig.ErrNoDocumentEditor) {
+    out, err = tomlparser.Default.Marshal(data) // no editor: accept a reformat
+}
+```
+
+The data you pass is the whole document, not a patch: a key it does not mention is a
+key the rewrite removes. `EditDocument` parses the result and compares it against that
+data before returning, so a botched rewrite is an error ([`ErrEditNotVerified`]) rather
+than a file you have already written. A change the format cannot express as an edit of
+_this_ document — a new key that would need a TOML section the file does not have, a
+YAML value spread over several lines — is refused with the parser's own error, and the
+document is left alone; fall back to `Marshal` when a reformat is acceptable.
+
+`parsers/toml` and `parsers/yaml` implement it. A parser without an editor reports
+`ErrNoDocumentEditor`, which is about the parser rather than the data — see
+[docs/implementing-parsers.md](docs/implementing-parsers.md#in-place-editing-documenteditor).
+
+[`ErrEditNotVerified`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrEditNotVerified
+
 ## Validation
 
 The `kongfig/validation` sub-package (core module, no extra dependencies) provides

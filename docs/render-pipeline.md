@@ -402,6 +402,19 @@ runs of spaces, so a value with nowhere to break (a long URL, a path) is left on
 line rather than split mid-token. Redacted values are never folded: the placeholder stands
 in for the value, and folding it would fold the placeholder. `Marshal` never folds.
 
+A fold leaves room for the entry's provenance. Past a line-ending backslash a `#` is string
+content, not a comment, so the closing `"""` line is the only line of a folded value a
+comment may follow — and a comment written above it would land inside the string. The fold
+is therefore packed into a width held back by what the annotation needs, on every line, which
+also keeps the block clear of the column the annotations align on, and the annotation is
+pinned to the closing line with [`render.AnnMarkerFixed`](render.md#renderannmarkerfixed) so
+the aligner cannot lift it. The hold-back is dropped when it would take more than half the
+line, or leave too little room to fold into at all: a comment beside the value is worth less
+than a value the reader can follow. When even the closing line has no room, the annotation
+goes on a comment line above the whole entry, outside the string, where a comment is a
+comment. An expanded array holds its elements to the same width, so the block reads as one
+entry with a comment beside its opening bracket.
+
 ## Bind: parser → renderer
 
 `kongfig.Bind(parser, styler)` wires a `Parser` to a `Styler`:

@@ -202,6 +202,12 @@ if align {
 }
 ```
 
+`AlignAnnotationsCtx` may move a marked annotation to a comment line above its value when
+the terminal leaves no room for it inline. Where that would change what the document means
+— above the line closing a folded multi-line string, a comment lands inside the string —
+use `render.AnnMarkerFixed` instead: it aligns when the column has room and follows its
+content when it does not, but is never lifted.
+
 ## Testing checklist
 
 Each parser's test file should cover:

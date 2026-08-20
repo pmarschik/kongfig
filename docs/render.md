@@ -69,6 +69,21 @@ if align {
 }
 ```
 
+### `render.AnnMarkerFixed`
+
+A second sentinel byte (`\x01`) for a line whose annotation must stay on it, because the
+line above is not a place a comment may go. The line that closes a folded TOML multi-line
+string is one: a comment written above it lands inside the string, and the value the reader
+parses back is not the value that was rendered.
+
+A fixed annotation aligns with the others when the alignment column has room for it, and
+follows its content directly when it does not. It is never lifted to a line of its own, and
+it never pulls the alignment column: only movable annotations get a say in where that
+column lands.
+
+Use it only where the above-line fallback would change the meaning of the output — a plain
+`AnnMarker` is the right choice everywhere else.
+
 ### `render.AlignAnnotations(raw string, w io.Writer) error`
 
 Post-processes lines containing `AnnMarker`, padding each value segment to the same
@@ -85,15 +100,25 @@ return render.AlignAnnotations(buf.String(), w)
 ### `render.AlignAnnotationsCtx(ctx context.Context, raw string, w io.Writer) error`
 
 Like `AlignAnnotations` but reads the terminal width from `ctx` (set via `render.WithTTYSize`
-or `render.TTYSizeKey`). When the terminal is too narrow to fit the annotation inline
-(`maxValueWidth + 1 + maxAnnotationWidth > cols`), the annotation is written as a comment
-line **above** the value line, indented to match:
+or `render.TTYSizeKey`). When a line cannot fit its annotation inline, that annotation is
+written as a comment line **above** the value line, indented to match:
 
 ```
 # from file.yaml
 host: localhost
 # from environment
 port: 8080
+```
+
+The decision is per line, not per document. The alignment column is chosen to keep as many
+annotations inline as it can, so one unusually wide line gives way on its own instead of
+pushing every annotation in the document above its value:
+
+```
+host = "localhost"                  # from file.yaml
+port = 8080                         # from environment
+# defaults
+endpoint = "https://…very long…"
 ```
 
 Prefer `AlignAnnotationsCtx` over `AlignAnnotations` in renderer implementations that

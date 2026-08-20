@@ -244,4 +244,5 @@ Each parser's test file should cover:
 - Help comments use `# prefix`.
 - Supports nested maps via recursive `renderMap`.
 - Slices and maps render as YAML flow syntax (`[{k: v}, ...]`). Use `reflect.TypeOf(v).Kind()` to detect any slice/map — typed slices like `[]SomeStruct` would otherwise fall through to Go's `%v` format.
+- A sub-tree whose path is marked inline (`yaml.WithInlineMaps`, `kongfig:",inline"`) collapses into a flow mapping instead of a nested block mapping — the same marks `parsers/toml` reads for inline tables.
 - Honour `render.BlockCollections(ctx)`: when true, always emit block style regardless of inline length or TTY width.

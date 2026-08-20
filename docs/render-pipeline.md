@@ -248,7 +248,7 @@ type CtxMarshaler interface {
 }
 ```
 
-`passthroughRenderer` prefers it and falls back to `Marshal`, so implementing it is additive: an existing parser keeps working, and one that adds `MarshalCtx` starts seeing the options — the [key order](#key-order) and its sort hooks, and for TOML the `,inline` marks under `InlineTablesKey`. All three built-in parsers implement it, each with `Marshal` reduced to `MarshalCtx(context.Background(), data)` so the two paths cannot drift. That makes the empty context the plain-write case, and every one of them is byte-for-byte what it wrote before when no order is bound — YAML and JSON both fall back to handing the map to their encoder, whose key sorting is not the plain alphabetical order `render.OrderedKeys` produces. That fast path asks `render.HasKeyOrder(ctx)` rather than reading one key, so a derived order or a sort hook is not silently dropped along with the explicit one.
+`passthroughRenderer` prefers it and falls back to `Marshal`, so implementing it is additive: an existing parser keeps working, and one that adds `MarshalCtx` starts seeing the options — the [key order](#key-order) and its sort hooks, and the `,inline` marks under `InlineTablesKey`, which TOML and YAML both act on. All three built-in parsers implement it, each with `Marshal` reduced to `MarshalCtx(context.Background(), data)` so the two paths cannot drift. That makes the empty context the plain-write case, and every one of them is byte-for-byte what it wrote before when no order is bound — YAML and JSON both fall back to handing the map to their encoder, whose key sorting is not the plain alphabetical order `render.OrderedKeys` produces. That fast path asks `render.HasKeyOrder(ctx)` rather than reading one key, so a derived order or a sort hook is not silently dropped along with the explicit one.
 
 The same interface makes marshalling order-aware outside rendering entirely. `WithRenderKeyOrderCtx` builds the context, which is what lets a config file be rewritten in the order it was read:
 
@@ -292,7 +292,9 @@ Paths are marked either on the parser (`toml.WithInlineTables("buckets.*")`, whe
 segment matches exactly one path segment) or from the config struct via the
 `kongfig:",inline"` tag — see [struct-tags.md](struct-tags.md#inline-option). Tag-derived
 paths reach the parser through the `kongfig.InlineTablesKey` path meta, which `NewFor[T]`
-populates; `Parser.MarshalCtx` accepts the same context so writes honour them too.
+populates; `Parser.MarshalCtx` accepts the same context so writes honour them too. The mark
+is not TOML-only: YAML reads the same paths and collapses them into flow mappings — see
+[YAML layout](#yaml-layout).
 
 An inlinable table is only inlined if it passes the gates:
 
@@ -414,6 +416,50 @@ than a value the reader can follow. When even the closing line has no room, the 
 goes on a comment line above the whole entry, outside the string, where a comment is a
 comment. An expanded array holds its elements to the same width, so the block reads as one
 entry with a comment beside its opening bracket.
+
+## YAML layout
+
+Like TOML, the YAML parser renders and writes through settings that apply to both
+`Render` and `Marshal`. Construct a configured parser with `yaml.New(opts...)`;
+`yaml.Default` keeps the defaults.
+
+### Flow mappings
+
+A mapping whose path is marked is emitted as a YAML flow mapping instead of a nested block
+mapping:
+
+```yaml
+buckets:
+  work: { color: blue, path: /w }
+```
+
+The marks are the ones TOML reads for [inline tables](#inline-tables): the parser options
+`yaml.WithInlineMaps("buckets.*")` and `yaml.WithInlineOverflow("buckets.*")`, or a
+`kongfig:",inline"` / `kongfig:",overflow"` struct tag reaching the parser through the
+`kongfig.InlineTablesKey` and `kongfig.InlineOverflowKey` path meta. The gates are the same
+too:
+
+| Gate                     | Render | Marshal |
+| ------------------------ | ------ | ------- |
+| direct key count ≤ limit | yes    | yes     |
+| fits the terminal width  | yes    | no      |
+
+The key limit is `yaml.DefaultInlineMaxKeys` (3), overridable globally with
+`yaml.WithInlineMaxKeys(n)` or per path with `inline=N` in the struct tag. Keys left out by
+an [omitempty](struct-tags.md#omitempty-option) mark are not written, so they do not count
+toward the limit either.
+
+Failing either gate keeps the block mapping. This is where YAML differs from TOML: there is
+no reflow, because a flow mapping spread over several lines reads no better than the block
+mapping it came from. The width gate is waived for an overflow-marked path, and `Marshal`
+never consults the width at all — a written file must not depend on the terminal that
+produced it.
+
+Values inside a collapsed mapping keep their treatment: a redacted value stays its
+placeholder, a nested mapping collapses along with its parent (a block mapping cannot live
+inside a flow one), and the provenance of the values whose lines are gone moves onto the
+line that replaced them — one comment when they share a source, otherwise one group per
+source naming the keys it covers.
 
 ## Bind: parser → renderer
 

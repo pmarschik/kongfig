@@ -176,9 +176,10 @@ The path set is populated at startup from the config struct type, not at runtime
 ## inline option
 
 `kongfig:"name,inline"` marks a table as a candidate for a compact one-line form where
-the output format supports it. Today only the TOML parser acts on it, emitting a TOML
+the output format supports it. The mark is format-agnostic: the TOML parser writes an
 inline table (`work = {path = "/w", color = "blue"}`) instead of a `[buckets.work]`
-section.
+section, and the YAML parser writes a flow mapping (`work: {path: /w, color: blue}`)
+instead of a nested block mapping. Formats with no compact form ignore it.
 
 What gets marked depends on the field's type:
 
@@ -200,7 +201,7 @@ type Config struct {
 
 `inline=N` caps the number of direct keys the table may hold; a table with more keys falls
 back to a regular section. Plain `inline` (no `=N`) defers to the renderer's default,
-`toml.DefaultInlineMaxKeys` (3).
+`toml.DefaultInlineMaxKeys` / `yaml.DefaultInlineMaxKeys` (3).
 
 `schema.InlineTablePaths[T]()` returns the marked paths as `[]schema.InlineTableEntry`
 (`{Path, MaxKeys, Overflow}`). `NewFor[T]` calls it automatically and publishes the result
@@ -219,6 +220,11 @@ p := toml.New(
     toml.WithInlineTables("buckets.*"),
     toml.WithInlineMaxKeys(4),
 )
+
+y := yaml.New(
+    yaml.WithInlineMaps("buckets.*"),
+    yaml.WithInlineMaxKeys(4),
+)
 ```
 
 See [render-pipeline.md](render-pipeline.md#toml-layout) for how the key limit interacts
@@ -229,8 +235,9 @@ with terminal width.
 ## overflow option
 
 `kongfig:"name,overflow"` keeps the compact form even when it does not fit the terminal,
-instead of falling back to the format's roomier shape — a `[section]` for a table,
-`[[section]]` blocks for an array of tables. It implies `inline`, so it stands alone:
+instead of falling back to the format's roomier shape — a `[section]` for a TOML table,
+`[[section]]` blocks for an array of tables, a block mapping for YAML. It implies
+`inline`, so it stands alone:
 
 ```go
 type Config struct {
@@ -243,7 +250,8 @@ when the lines run past the edge of the window, while a section per rule buries 
 a config file never consults the terminal width, so the mark only changes rendered output.
 
 `NewFor[T]` publishes the marked paths under [`kongfig.InlineOverflowKey`] alongside the
-inline marks. The parser route is `toml.WithInlineOverflow("rules")`.
+inline marks. The parser route is `toml.WithInlineOverflow("rules")` or
+`yaml.WithInlineOverflow("rules")`.
 
 ---
 

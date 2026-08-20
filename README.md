@@ -328,6 +328,22 @@ depends on terminal width.
 See [docs/render-pipeline.md](docs/render-pipeline.md#toml-layout) and
 [docs/struct-tags.md](docs/struct-tags.md#inline-option).
 
+## YAML layout
+
+The same `,inline` mark drives YAML, which spells the compact form as a flow mapping:
+
+```yaml
+buckets:
+  work: { color: blue, path: /w }
+```
+
+Paths can be marked on the parser with `yamlparser.WithInlineMaps("buckets.*")` and the
+key limit raised with `yamlparser.WithInlineMaxKeys(n)`. A marked mapping too wide for
+the terminal falls back to a block mapping unless the path is marked
+`yamlparser.WithInlineOverflow(...)`; writing never depends on terminal width.
+
+See [docs/render-pipeline.md](docs/render-pipeline.md#yaml-layout).
+
 ## Editing a config file in place
 
 A program that changes a user's config file — adding a pattern to a list, pointing a

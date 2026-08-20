@@ -14,7 +14,15 @@ import (
 )
 
 // Parser implements [kongfig.Parser] for YAML.
-type Parser struct{}
+//
+// The zero value is ready to use. Use [New] with [WithInlineMaps],
+// [WithInlineMaxKeys] and [WithInlineOverflow] to let marked mappings collapse
+// into flow mappings; the settings apply to both [Parser.Marshal] and rendering.
+type Parser struct {
+	inlineMaxKeys    *int
+	inlinePatterns   []string
+	overflowPatterns []string
+}
 
 // Default is a ready-to-use Parser instance.
 var Default = &Parser{}
@@ -122,25 +130,43 @@ func (p Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
 // written out as-is, which is what lets a config file be rewritten in the order it
 // was parsed rather than alphabetized. Keys the order does not name follow it
 // alphabetically. A sortby= mark or a [kongfig.KeySortFunc] in the context orders
-// keys too, and is honored the same way. Without anything in the context that
-// orders keys the output is byte-for-byte [Parser.Marshal]'s. See
-// [kongfig.WithRenderKeyOrderCtx] and [kongfig.WithRenderKeySortCtx] for building
-// such a context.
-func (Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte, error) {
+// keys too, and is honored the same way. Inline marks derived from ,inline struct
+// tags ([kongfig.InlineTablesKey], injected by [kongfig.NewFor]) apply as well, so
+// a marked mapping is written as a flow mapping; terminal width is ignored either
+// way. Without anything in the context that orders keys or marks a mapping the
+// output is byte-for-byte [Parser.Marshal]'s. See [kongfig.WithRenderKeyOrderCtx]
+// and [kongfig.WithRenderKeySortCtx] for building such a context.
+func (p Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := goyaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 
-	// With no order to honor, hand the map to the encoder as before: its own key
-	// sorting is not plain alphabetical, so an ordered walk would quietly change
-	// the output of every existing caller.
+	// Width is ignored when writing a file, but an overflow mark implies an inline
+	// one, so a field tagged only ,overflow still collapses here.
+	inline := p.inlinePolicyFor(false).withCtxMarks(ctx)
+
+	// With no order to honor and nothing marked, hand the map to the encoder as
+	// before: its own key sorting is not plain alphabetical, so an ordered walk
+	// would quietly change the output of every existing caller.
 	var value any = data
-	if render.HasKeyOrder(ctx) {
+	switch {
+	case render.HasKeyOrder(ctx):
 		node, err := orderedNode(ctx, "", data)
 		if err != nil {
 			return nil, err
 		}
 		value = node
+	case !inline.empty():
+		// Encoding to a node first keeps go-yaml's own key order and scalar
+		// styling; only the style of the marked mappings changes.
+		node := &goyaml.Node{}
+		if err := node.Encode(map[string]any(data)); err != nil {
+			return nil, err
+		}
+		value = node
+	}
+	if node, ok := value.(*goyaml.Node); ok && !inline.empty() {
+		applyInlineFlow(node, "", inline)
 	}
 	if err := enc.Encode(value); err != nil {
 		return nil, err
@@ -201,13 +227,14 @@ func (p Parser) Bind(s kongfig.Styler) kongfig.Renderer {
 
 // renderer writes YAML with token-level styling.
 type renderer struct {
-	p Parser
 	s kongfig.Styler
+	p Parser
 }
 
 // yamlRenderOpts groups the layout options that are computed once per Render call
 // and shared across all recursive rendering functions.
 type yamlRenderOpts struct {
+	inline     inlinePolicy
 	cols       int
 	forceBlock bool
 	align      bool
@@ -218,6 +245,7 @@ func (r *renderer) Render(ctx context.Context, w io.Writer, data kongfig.ConfigD
 	opts := yamlRenderOpts{
 		cols:       tty.Cols,
 		forceBlock: render.BlockCollections(ctx),
+		inline:     r.p.inlinePolicyFor(true).withCtxMarks(ctx),
 	}
 	if !render.AlignSources(ctx) {
 		return renderMap(ctx, w, r.s, data, "", 0, opts)
@@ -249,15 +277,8 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		}
 
 		if sub, ok := v.(kongfig.ConfigData); ok {
-			var buf bytes.Buffer
-			if err := renderMap(ctx, &buf, s, sub, path, indent+1, opts); err != nil {
+			if err := renderSubMapping(ctx, w, s, k, sub, path, pad, indent, opts); err != nil {
 				return err
-			}
-			if buf.Len() > 0 {
-				fmt.Fprintf(w, "%s%s:\n", pad, s.Key(k))
-				if _, err := buf.WriteTo(w); err != nil {
-					return err
-				}
 			}
 			continue
 		}
@@ -267,6 +288,30 @@ func renderMap(ctx context.Context, w io.Writer, s kongfig.Styler, data kongfig.
 		}
 	}
 	return nil
+}
+
+// renderSubMapping writes one nested mapping: as a flow mapping on one line when
+// its path is marked and it fits, otherwise as a block mapping under its key. The
+// block form is written to a buffer first because a mapping whose keys were all
+// dropped writes nothing at all, header included.
+func renderSubMapping(ctx context.Context, w io.Writer, s kongfig.Styler, k string, sub kongfig.ConfigData, path, pad string, indent int, opts yamlRenderOpts) error {
+	if line, inlined := inlineMappingLine(ctx, s, k, sub, path, pad, opts); inlined {
+		if ann := inlineAnnotation(ctx, s, path, sub); ann != "" {
+			line += annSuffix(ann, s, opts.align)
+		}
+		_, err := fmt.Fprintln(w, line)
+		return err
+	}
+	var buf bytes.Buffer
+	if err := renderMap(ctx, &buf, s, sub, path, indent+1, opts); err != nil {
+		return err
+	}
+	if buf.Len() == 0 {
+		return nil
+	}
+	fmt.Fprintf(w, "%s%s:\n", pad, s.Key(k))
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 func renderYAMLLeaf(ctx context.Context, w io.Writer, s kongfig.Styler, k string, v any, path, pad string, opts yamlRenderOpts) error {
@@ -327,7 +372,12 @@ func resolveYAMLLeafFormat(rv kongfig.RenderedValue, isRV bool, rawVal any, k, p
 }
 
 func yamlAnnSuffix(ctx context.Context, rv kongfig.RenderedValue, path string, s kongfig.Styler, align bool) string {
-	ann := render.Annotation(ctx, rv, path, s)
+	return annSuffix(render.Annotation(ctx, rv, path, s), s, align)
+}
+
+// annSuffix is the trailing comment a line carries, marked for the aligner when
+// annotations are being aligned.
+func annSuffix(ann string, s kongfig.Styler, align bool) string {
 	if ann == "" {
 		return ""
 	}

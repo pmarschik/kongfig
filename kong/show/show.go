@@ -1,7 +1,8 @@
 // Package show provides reusable kong CLI flags for the kongfig config-show command.
 //
-// Embed [Flags] for full output control: --format, --layers.
-// Embed [SimpleFlags] for minimal control: --plain, --layers (no format selection).
+// Embed [Flags] for full output control: --format, --layers, comment flags.
+// Embed [SimpleFlags] for minimal control: --plain, --layers, comment flags
+// (no format selection).
 package show
 
 import (
@@ -47,6 +48,49 @@ type LayersFlag struct {
 // are replaced with "***" in output. Pass --redacted to reveal them.
 type RedactedFlag struct {
 	ShowRedacted bool `name:"redacted" config:"-" negatable:"" help:"Show redacted values (default: hidden)."`
+}
+
+// CommentsFlag adds the comment-suppression flags --no-comments, --no-provenance
+// and --no-help. Comments are on by default; each flag drops one part of them:
+//
+//	--no-provenance   drop the per-value "# env.tag $HOST" annotations
+//	--no-help         drop the help comments above each key
+//	--no-comments     drop both
+//
+// --no-provenance is a merged-view flag: in --layers output the section header is
+// what attributes a layer's values, so [Flags.Validate] rejects the combination.
+// Embedded in [Flags] and [SimpleFlags].
+type CommentsFlag struct {
+	NoComments   bool `name:"no-comments"   config:"-" help:"Suppress all comments (help texts and source annotations)."`
+	NoProvenance bool `name:"no-provenance" config:"-" help:"Suppress source annotations, keeping help comments. Not valid with --layers."`
+	NoHelp       bool `name:"no-help"       config:"-" help:"Suppress help comments, keeping source annotations."`
+}
+
+// Options returns the [kongfig.RenderOption] slice derived from the comment flags.
+func (f CommentsFlag) Options() []kongfig.RenderOption {
+	var opts []kongfig.RenderOption
+	if f.NoComments {
+		opts = append(opts, kongfig.WithRenderNoComments())
+	}
+	if f.NoProvenance {
+		opts = append(opts, kongfig.WithRenderNoProvenance())
+	}
+	if f.NoHelp {
+		opts = append(opts, kongfig.WithRenderNoHelp())
+	}
+	return opts
+}
+
+// errNoProvenanceWithLayers is returned when --no-provenance meets --layers.
+var errNoProvenanceWithLayers = errors.New("--no-provenance cannot be combined with --layers: " +
+	"per-layer output attributes its values through the section header")
+
+// validateComments reports the --no-provenance/--layers conflict.
+func validateComments(comments CommentsFlag, layers bool) error {
+	if comments.NoProvenance && layers {
+		return errNoProvenanceWithLayers
+	}
+	return nil
 }
 
 // SourcesFlag adds per-source visibility toggles as negatable boolean flags.
@@ -137,13 +181,21 @@ type Flags struct {
 	SourceListFlag  `embed:""`
 	LayersFlag      `embed:""`
 	RedactedFlag    `embed:""`
+	CommentsFlag    `embed:""`
 }
+
+// Validate rejects flag combinations that cannot be honored: --no-provenance
+// with --layers. kong calls it through the command struct that embeds Flags —
+// the method is promoted, so a command embedding Flags anonymously and declaring
+// no Validate of its own gets the check for free. A command with its own
+// Validate shadows this one and should call it.
+func (f Flags) Validate() error { return validateComments(f.CommentsFlag, f.Layers) }
 
 // Options returns the [kongfig.RenderOption] slice derived from flag state.
 // Pass the result (along with caller-specific options) to Render,
 // [kongfig.RenderLayers], or [kongfig.RenderWith].
 func (f *Flags) Options(k *kongfig.Kongfig) []kongfig.RenderOption {
-	var opts []kongfig.RenderOption
+	opts := f.CommentsFlag.Options()
 	if f.ShowRedacted {
 		opts = append(opts, kongfig.WithRenderShowRedacted())
 	}
@@ -216,11 +268,16 @@ type SimpleFlags struct {
 	OutputPlainFlag `embed:""`
 	RedactedFlag    `embed:""`
 	SourcesFlag     `embed:""`
+	CommentsFlag    `embed:""`
 }
+
+// Validate rejects --no-provenance combined with --layers. See [Flags.Validate]
+// for how kong reaches it.
+func (f SimpleFlags) Validate() error { return validateComments(f.CommentsFlag, f.Layers) }
 
 // Options returns the [kongfig.RenderOption] slice derived from flag state.
 func (f *SimpleFlags) Options(k *kongfig.Kongfig) []kongfig.RenderOption {
-	var opts []kongfig.RenderOption
+	opts := f.CommentsFlag.Options()
 	if f.ShowRedacted {
 		opts = append(opts, kongfig.WithRenderShowRedacted())
 	}

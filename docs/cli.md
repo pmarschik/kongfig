@@ -109,10 +109,21 @@ Embed `show.Flags` in a CLI struct to add config-display flags. Call
 | `--layers`         | bool             | Render each config layer separately instead of the merged view                         |
 | `--verbose` / `-v` | counter          | Show detailed sub-source labels in `--layers` output (repeat for more)                 |
 | `--redacted`       | bool (negatable) | Reveal values hidden by `kongfig:",redacted"` (default: hidden)                        |
+| `--no-comments`    | bool             | Suppress every comment: help texts and source annotations                              |
+| `--no-provenance`  | bool             | Suppress source annotations, keep help comments. Not valid with `--layers`             |
+| `--no-help`        | bool             | Suppress help comments, keep source annotations                                        |
+
+`--no-provenance` is a merged-view flag: under `--layers` the section header is
+what attributes a layer's values, so the combination is rejected. `Flags.Validate`
+reports it, and kong calls that method through the command struct that embeds
+`Flags` — a command embedding it anonymously with no `Validate` of its own gets
+the check for free; one that declares its own `Validate` shadows it and should
+call `Flags.Validate` from there.
 
 For apps that don't need format selection, **`show.SimpleFlags`** provides a
-simpler set: `--plain`, `--layers`, `--redacted`, and per-source negatable flags
-(`--no-defaults`, `--no-env`, `--no-file`, `--no-flags`).
+simpler set: `--plain`, `--layers`, `--redacted`, the comment flags above, and
+per-source negatable flags (`--no-defaults`, `--no-env`, `--no-file`,
+`--no-flags`).
 
 Inject the `--format` enum at `kong.New` time so format options match registered
 parsers:

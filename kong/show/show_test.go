@@ -11,10 +11,10 @@ import (
 	"github.com/pmarschik/kongfig/style/plain"
 )
 
-func newKongfig(t *testing.T, data map[string]any, source string) *kongfig.Kongfig {
+func newKongfig(t *testing.T, data map[string]any) *kongfig.Kongfig {
 	t.Helper()
 	k := kongfig.New()
-	if err := k.LoadParsed(data, source); err != nil {
+	if err := k.LoadParsed(data, "file"); err != nil {
 		t.Fatal(err)
 	}
 	return k
@@ -23,7 +23,7 @@ func newKongfig(t *testing.T, data map[string]any, source string) *kongfig.Kongf
 func TestRenderNoRenderer_Error(t *testing.T) {
 	// Without a registered parser or DefaultRenderer, Render must return an error
 	// rather than silently falling back to any built-in format.
-	k := newKongfig(t, map[string]any{"host": "localhost", "port": 8080}, "file")
+	k := newKongfig(t, map[string]any{"host": "localhost", "port": 8080})
 	f := &kongshow.Flags{}
 	var buf bytes.Buffer
 	err := f.Render(context.Background(), &buf, k, plain.New(), kongfig.WithRenderNoComments())
@@ -33,7 +33,7 @@ func TestRenderNoRenderer_Error(t *testing.T) {
 }
 
 func TestRenderEnv(t *testing.T) {
-	k := newKongfig(t, map[string]any{"host": "localhost"}, "file")
+	k := newKongfig(t, map[string]any{"host": "localhost"})
 	f := &kongshow.Flags{FormatFlag: kongshow.FormatFlag{Format: "env"}}
 	var buf bytes.Buffer
 	if err := f.Render(context.Background(), &buf, k, plain.New(), kongfig.WithRenderNoComments()); err != nil {
@@ -46,7 +46,7 @@ func TestRenderEnv(t *testing.T) {
 }
 
 func TestRenderFlags(t *testing.T) {
-	k := newKongfig(t, map[string]any{"host": "localhost"}, "file")
+	k := newKongfig(t, map[string]any{"host": "localhost"})
 	f := &kongshow.Flags{FormatFlag: kongshow.FormatFlag{Format: "flags"}}
 	var buf bytes.Buffer
 	if err := f.Render(context.Background(), &buf, k, plain.New(), kongfig.WithRenderNoComments()); err != nil {

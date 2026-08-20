@@ -33,12 +33,14 @@ The `kong/show.Flags` struct is designed to be embedded in any CLI's `show-confi
 
 No `--layers` flag. Renders the single merged map.
 
-| Flags           | Behavior                                                                                                                                                          |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _(none)_        | Merged config; format chosen from registered parsers (first registered, or YAML if none); inline `# source` annotations on each value.                            |
-| `--format=X`    | Force a specific output format (yaml/toml/json/env/flags). Overrides the inferred default. Not meaningful in `--layers` mode (each layer uses its native format). |
-| `--no-comments` | Suppress source annotations.                                                                                                                                      |
-| `--redacted`    | Reveal values that are normally hidden (e.g. passwords).                                                                                                          |
+| Flags             | Behavior                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(none)_          | Merged config; format chosen from registered parsers (first registered, or YAML if none); inline `# source` annotations on each value.                            |
+| `--format=X`      | Force a specific output format (yaml/toml/json/env/flags). Overrides the inferred default. Not meaningful in `--layers` mode (each layer uses its native format). |
+| `--no-comments`   | Suppress every comment: help texts and source annotations.                                                                                                        |
+| `--no-provenance` | Suppress source annotations, keeping help comments. Merged view only — rejected together with `--layers`.                                                         |
+| `--no-help`       | Suppress help comments, keeping source annotations.                                                                                                               |
+| `--redacted`      | Reveal values that are normally hidden (e.g. passwords).                                                                                                          |
 
 **Note:** Default format selection (inferring YAML vs. TOML from registered parsers) is
 planned but not yet implemented. Currently always defaults to YAML.
@@ -77,6 +79,16 @@ tracked as a future feature.
 
 Available on `SimpleFlags`. Disables ANSI color output. When `Flags` is used, the caller
 controls styling by passing the appropriate `Styler` to `Render`.
+
+### `--no-comments` / `--no-provenance` / `--no-help`
+
+Comments are on by default. `--no-provenance` drops the per-value `# env.tag $APP_HOST`
+annotations, `--no-help` drops the help comments above each key, `--no-comments` drops both.
+
+`--no-provenance` is a merged-view flag: with `--layers` the section header is what
+attributes a layer's values, and per-value annotations are already suppressed for the
+layer being rendered, so the combination is rejected rather than silently ignored.
+`--no-help` and `--no-comments` stay meaningful per layer and are accepted there.
 
 ### `--redacted` / `--no-redacted`
 

@@ -394,12 +394,12 @@ See [docs/validation.md](docs/validation.md) for the full reference.
 Four `kong/` subpackages integrate with [kong](https://github.com/alecthomas/kong),
 and `ScanFlag` handles pre-parse bootstrapping for any CLI framework:
 
-| Package         | Description                                                |
-| --------------- | ---------------------------------------------------------- |
-| `kong/resolver` | Use kongfig as a kong flag resolver (config-file defaults) |
-| `kong/provider` | Load kong-parsed env vars and flags as a kongfig layer     |
-| `kong/show`     | Add `--format`, `--layers`, `--redacted` flags to your CLI |
-| `kong/charming` | Charming-styled help + resolver wired in one call          |
+| Package         | Description                                                                 |
+| --------------- | --------------------------------------------------------------------------- |
+| `kong/resolver` | Use kongfig as a kong flag resolver (config-file defaults)                  |
+| `kong/provider` | Load kong-parsed env vars and flags as a kongfig layer                      |
+| `kong/show`     | Add `--format`, `--layers`, `--redacted`, `--no-comments` flags to your CLI |
+| `kong/charming` | Charming-styled help + resolver wired in one call                           |
 
 ```go
 type CLI struct {

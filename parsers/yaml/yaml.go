@@ -26,6 +26,7 @@ var (
 	_ kongfig.KeyOrderParser = Parser{}
 	_ kongfig.DocumentParser = Parser{}
 	_ kongfig.CtxMarshaler   = Parser{}
+	_ kongfig.DocumentEditor = Parser{}
 )
 
 // Unmarshal decodes YAML bytes into a map.

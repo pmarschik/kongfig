@@ -110,8 +110,11 @@ if ann := render.Annotation(ctx, rv, path, s); ann != "" {
 }
 ```
 
-`render.Annotation` returns `""` when `rv` has no source or when `render.NoComments(ctx)` is
-true, so callers do not need to check either condition separately.
+`render.Annotation` returns `""` when `rv` has no source or when `render.NoProvenance(ctx)` is
+true — the latter covers both `WithRenderNoProvenance()` and the broader
+`WithRenderNoComments()` — so callers do not need to check either condition separately.
+Help comments have the mirror gate: `render.HelpText` and `render.HelpTexts` go quiet under
+`WithRenderNoHelp()`, so a renderer that goes through them honors every comment flag.
 It delegates to `LayerMeta.RenderAnnotation` (via `rv.Source.Layer`) which handles
 structured annotation styling (file paths, env var names, flag names via `SourceKind`/`SourceData`/`SourceKey`).
 

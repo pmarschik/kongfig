@@ -150,6 +150,13 @@ if ann := render.Annotation(ctx, rv, path, s); ann != "" {
 
 ### 3. `render.NoComments` — gate all comment/annotation output
 
+A renderer that reaches its comments through `render.Annotation` and
+`render.HelpText`/`render.HelpTexts` also gets the finer gates for free:
+`WithRenderNoProvenance()` empties the first, `WithRenderNoHelp()` the second, and
+`WithRenderNoComments()` both. Reading `render.NoComments(ctx)` on its own is still
+correct for deciding whether _any_ comment can appear — but never emit a comment the
+helpers declined to produce.
+
 ```go
 noComments := render.NoComments(ctx)
 

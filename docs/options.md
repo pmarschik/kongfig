@@ -58,6 +58,8 @@ Renderers read options via accessors in the `render` sub-package.
 | Option                                                  | Effect                                                                                                                                                                                                                                                                                                |
 | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WithRenderNoComments()`                                | Suppress all comment output (help texts + source annotations).                                                                                                                                                                                                                                        |
+| `WithRenderNoProvenance()`                              | Suppress source annotations only; help comments stay. Applied inside `render.Annotation`, so every renderer honors it.                                                                                                                                                                                |
+| `WithRenderNoHelp()`                                    | Suppress help comments only; source annotations stay. Applied inside `render.HelpText`/`render.HelpTexts`.                                                                                                                                                                                            |
 | `WithRenderShowRedacted()`                              | Reveal values that would otherwise be redacted.                                                                                                                                                                                                                                                       |
 | `WithRenderFilterSource(filters []string)`              | Source filter list. Empty = show all. `"env"` = only env. `"no-defaults"` = exclude defaults. See [Provenance & Filtering](provenance.md).                                                                                                                                                            |
 | `WithRenderHelpTexts(texts map[string]string)`          | Per-path human descriptions emitted as comments above keys. Supports prefix matching (parent path covers map/slice leaves). Each text is emitted at most once per render call. Overrides the instance-level set from `WithHelpTexts` / `NewFor[T]`.                                                   |
@@ -75,6 +77,8 @@ Renderers read options via the `render` sub-package, not from a struct:
 
 ```go
 render.NoComments(ctx)          // bool
+render.NoProvenance(ctx)        // bool (true under NoComments too)
+render.NoHelp(ctx)              // bool (true under NoComments too)
 render.HelpTexts(ctx)           // map[string]string
 render.AlignSources(ctx)        // bool (true = align, default)
 render.FilterSourceFromCtx(ctx) // []string
@@ -91,6 +95,8 @@ the render path from middleware:
 | `*Ctx` function                                        | Equivalent `RenderOption`        |
 | ------------------------------------------------------ | -------------------------------- |
 | `WithRenderNoCommentsCtx(ctx)`                         | `WithRenderNoComments()`         |
+| `WithRenderNoProvenanceCtx(ctx)`                       | `WithRenderNoProvenance()`       |
+| `WithRenderNoHelpCtx(ctx)`                             | `WithRenderNoHelp()`             |
 | `WithRenderNoAlignSourcesCtx(ctx)`                     | `WithRenderNoAlignSources()`     |
 | `WithRenderFileRawPathsCtx(ctx)`                       | `WithRenderFileRawPaths()`       |
 | `WithRenderBlockCollectionsCtx(ctx)`                   | `WithRenderBlockCollections()`   |

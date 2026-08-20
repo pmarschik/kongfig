@@ -89,6 +89,8 @@ type pathMetaContainerKey struct{}
 // These use the same [NewRenderOptionsKey] facility that library users use for their own keys.
 var (
 	RenderNoCommentsKey       = NewRenderOptionsKey[bool]()
+	RenderNoProvenanceKey     = NewRenderOptionsKey[bool]()
+	RenderNoHelpKey           = NewRenderOptionsKey[bool]()
 	renderShowRedactedKey     = NewRenderOptionsKey[bool]()
 	RenderFilterSourceKey     = NewRenderOptionsKey[[]string]()
 	RenderVerboseSourcesKey   = NewRenderOptionsKey[map[string][]string]()
@@ -114,8 +116,21 @@ type renderOptions = options
 // RenderOption configures the render methods and renderer behavior.
 type RenderOption func(*renderOptions)
 
-// WithRenderNoComments suppresses source annotation comments in rendered output.
+// WithRenderNoComments suppresses every comment in rendered output: source
+// annotations and help texts alike. Use [WithRenderNoProvenance] or
+// [WithRenderNoHelp] to drop only one of the two.
 func WithRenderNoComments() RenderOption { return RenderNoCommentsKey.Bind(true) }
+
+// WithRenderNoProvenance suppresses the per-value source annotations
+// ("# env.tag $HOST") while leaving help comments in place.
+// [render.Annotation] applies it, so every renderer built on it honors the
+// option without a change.
+func WithRenderNoProvenance() RenderOption { return RenderNoProvenanceKey.Bind(true) }
+
+// WithRenderNoHelp suppresses the help comments emitted above each key while
+// leaving source annotations in place. [render.HelpText] and [render.HelpTexts]
+// apply it, so every renderer built on them honors the option without a change.
+func WithRenderNoHelp() RenderOption { return RenderNoHelpKey.Bind(true) }
 
 // WithRenderShowRedacted reveals values that would otherwise be redacted.
 func WithRenderShowRedacted() RenderOption { return renderShowRedactedKey.Bind(true) }
@@ -224,6 +239,20 @@ func WithRenderFileRawPathsCtx(ctx context.Context) context.Context {
 // In production code, prefer [WithRenderNoComments] passed to [Kongfig.RenderWith].
 func WithRenderNoCommentsCtx(ctx context.Context) context.Context {
 	return RenderNoCommentsKey.WithCtx(ctx, true)
+}
+
+// WithRenderNoProvenanceCtx returns a context with source annotations suppressed,
+// for use in tests or direct calls to renderer implementations outside
+// [Kongfig.RenderWith]. In production code, prefer [WithRenderNoProvenance].
+func WithRenderNoProvenanceCtx(ctx context.Context) context.Context {
+	return RenderNoProvenanceKey.WithCtx(ctx, true)
+}
+
+// WithRenderNoHelpCtx returns a context with help comments suppressed, for use in
+// tests or direct calls to renderer implementations outside [Kongfig.RenderWith].
+// In production code, prefer [WithRenderNoHelp].
+func WithRenderNoHelpCtx(ctx context.Context) context.Context {
+	return RenderNoHelpKey.WithCtx(ctx, true)
 }
 
 // WithRenderNoAlignSourcesCtx returns a context with alignment disabled, for use

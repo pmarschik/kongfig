@@ -42,7 +42,8 @@ Handles:
 Renders the source annotation for a `RenderedValue`. Returns `""` when:
 
 - `rv.Source` is zero (value has no provenance)
-- `render.NoComments(ctx)` is true
+- `render.NoProvenance(ctx)` is true — set by `WithRenderNoProvenance()` or the
+  broader `WithRenderNoComments()`
 
 Always use this instead of formatting annotations inline:
 
@@ -166,7 +167,9 @@ Renderers should call these instead of reading raw context values directly.
 | Accessor                          | Returns               | Description                                        |
 | --------------------------------- | --------------------- | -------------------------------------------------- |
 | `render.NoComments(ctx)`          | `bool`                | True when `WithRenderNoComments()` is active       |
-| `render.HelpTexts(ctx)`           | `map[string]string`   | Per-path help texts (`nil` when `NoComments`)      |
+| `render.NoProvenance(ctx)`        | `bool`                | True under `WithRenderNoProvenance()` or the above |
+| `render.NoHelp(ctx)`              | `bool`                | True under `WithRenderNoHelp()` or `NoComments`    |
+| `render.HelpTexts(ctx)`           | `map[string]string`   | Per-path help texts (`nil` when `NoHelp`)          |
 | `render.HelpText(ctx, path)`      | `string`              | Help text for path; prefix-matched, emitted once   |
 | `render.AlignSources(ctx)`        | `bool`                | True (default) unless `WithRenderNoAlignSources()` |
 | `render.FileRawPaths(ctx)`        | `bool`                | True when `WithRenderFileRawPaths()` is active     |

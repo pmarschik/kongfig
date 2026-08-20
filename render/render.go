@@ -306,11 +306,12 @@ func WithCurrentLayerCtx(ctx context.Context, id kongfig.SourceID) context.Conte
 }
 
 // Annotation renders the source annotation for a RenderedValue.
-// Returns "" when rv has no source (zero SourceMeta), when NoComments is active,
-// or when the source layer matches the current rendering layer (already shown in header).
-// Renderers do not need to check [NoComments] separately before calling this.
+// Returns "" when rv has no source (zero SourceMeta), when NoComments or
+// NoProvenance is active, or when the source layer matches the current rendering
+// layer (already shown in header). Renderers do not need to check [NoComments] or
+// [NoProvenance] separately before calling this.
 func Annotation(ctx context.Context, rv kongfig.RenderedValue, path string, s kongfig.Styler) string {
-	if NoComments(ctx) {
+	if NoProvenance(ctx) {
 		return ""
 	}
 	if rv.Source == (kongfig.SourceMeta{}) {
@@ -330,10 +331,32 @@ func NoComments(ctx context.Context) bool {
 	return v
 }
 
-// HelpTexts returns the per-path help texts from ctx.
-// Returns nil when NoComments is active.
-func HelpTexts(ctx context.Context) map[string]string {
+// NoProvenance reports whether per-value source annotations should be suppressed.
+// True under [kongfig.WithRenderNoProvenance] and under the broader
+// [kongfig.WithRenderNoComments].
+func NoProvenance(ctx context.Context) bool {
 	if NoComments(ctx) {
+		return true
+	}
+	v, _ := kongfig.RenderNoProvenanceKey.Read(ctx)
+	return v
+}
+
+// NoHelp reports whether help comments should be suppressed.
+// True under [kongfig.WithRenderNoHelp] and under the broader
+// [kongfig.WithRenderNoComments].
+func NoHelp(ctx context.Context) bool {
+	if NoComments(ctx) {
+		return true
+	}
+	v, _ := kongfig.RenderNoHelpKey.Read(ctx)
+	return v
+}
+
+// HelpTexts returns the per-path help texts from ctx.
+// Returns nil when NoComments or NoHelp is active.
+func HelpTexts(ctx context.Context) map[string]string {
+	if NoHelp(ctx) {
 		return nil
 	}
 	v, _ := kongfig.RenderHelpTextsKey.Read(ctx)

@@ -196,7 +196,7 @@ Call `render.Annotation(ctx, rv, path, s)` for every source annotation.
 It delegates to `LayerMeta.RenderAnnotation` (via `rv.Source.Layer`) which handles
 structured annotation styling (file paths, env var names) for providers that implement
 `ProviderDataSupport`. Returns `""` when the value has no source or when
-`render.NoComments(ctx)` is true.
+`render.NoProvenance(ctx)` is true (`WithRenderNoProvenance()` or `WithRenderNoComments()`).
 
 ---
 

@@ -2,6 +2,7 @@ package kongfig
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -14,7 +15,10 @@ type ConfigData map[string]any
 
 // ToConfigData recursively converts a map[string]any (e.g. from a parser library)
 // to ConfigData, replacing all nested map[string]any sub-trees with ConfigData.
-// Also recurses into []any slices so maps nested inside slices are converted too.
+// Also recurses into slices so maps nested inside them are converted too — including
+// slices a decoder typed more precisely than []any, such as the []map[string]any
+// github.com/BurntSushi/toml returns for an array of tables; those come back as
+// []any. Slices that cannot hold a map ([]string, []int) are left as they are.
 func ToConfigData(m map[string]any) ConfigData {
 	out := make(ConfigData, len(m))
 	for k, v := range m {
@@ -38,7 +42,45 @@ func normalizeAny(v any) any {
 		}
 		return out
 	default:
+		return normalizeSlice(v)
+	}
+}
+
+// normalizeSlice reaches the maps inside a slice a decoder typed more precisely
+// than []any — github.com/BurntSushi/toml hands back []map[string]any for an array
+// of tables. Without this, the same data parses to two different shapes depending
+// on whether the author wrote [[table]] blocks or an inline array of inline tables,
+// and every consumer has to type-switch on both. Slices that cannot hold a map
+// ([]string, []int) are returned untouched: rebuilding them would cost an
+// allocation per leaf and buy nothing.
+func normalizeSlice(v any) any {
+	rv := reflect.ValueOf(v)
+	if k := rv.Kind(); k != reflect.Slice && k != reflect.Array {
 		return v
+	}
+	if !mayHoldMaps(rv.Type().Elem()) {
+		return v
+	}
+	out := make([]any, rv.Len())
+	for i := range out {
+		out[i] = normalizeAny(rv.Index(i).Interface())
+	}
+	return out
+}
+
+// mayHoldMaps reports whether a value of type t can carry a sub-tree that
+// normalization has to descend into. A map keyed by anything but string is data
+// rather than a sub-tree — ConfigData cannot hold it — so it does not count.
+func mayHoldMaps(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Interface:
+		return true
+	case reflect.Map:
+		return t.Key().Kind() == reflect.String
+	case reflect.Slice, reflect.Array:
+		return mayHoldMaps(t.Elem())
+	default:
+		return false
 	}
 }
 

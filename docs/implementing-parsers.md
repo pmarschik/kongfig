@@ -145,6 +145,30 @@ because `github.com/BurntSushi/toml` does not report them. Every such scan must 
 string-literal aware. A `#` or an `=` inside a quoted value is text, not syntax, and an
 editor that reads it as syntax rewrites the wrong bytes.
 
+### Reporting the edits (`DocumentPatcher`)
+
+An editor that collects its edits before it splices them can hand them over instead of the
+document that they make:
+
+```go
+func (p Parser) PatchDocument(src []byte, want kongfig.ConfigData) (kongfig.DocumentPatch, error)
+```
+
+The walk over the document is the whole work, so both methods share it. Split that walk out
+of `EditDocument` into a helper that returns the loaded editor. `EditDocument` then splices
+the edits, and `PatchDocument` reports them. The two therefore refuse the same changes for
+the same reasons.
+
+`internal/editpatch.From` turns the collected `editsplice.Edit` values into a
+`kongfig.DocumentPatch`. It sorts them, refuses a set that no document can take, and copies
+them into the public type. The offsets of a patch are offsets of `src`, the document that
+you read them from, because a report writes nothing.
+
+A caller reaches the method through `kongfig.PatchDocument`. That function applies the patch
+and parses the result before it returns, so it reports `ErrEditNotVerified` for a patch that
+describes the wrong rewrite. It reports `ErrNoDocumentPatcher` when the parser edits a
+document but cannot report the edits.
+
 ## Renderer checklist
 
 The `Renderer` that `Bind` returns must handle all of the items below. If one is missing, users lose a feature and get no message.

@@ -1,6 +1,8 @@
 package editsplice_test
 
 import (
+	"errors"
+	"slices"
 	"testing"
 
 	"github.com/pmarschik/kongfig/internal/editsplice"
@@ -55,9 +57,9 @@ func TestApply(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := editsplice.Apply([]byte(src), tc.edits)
-			if !ok {
-				t.Fatal("the edits were refused as overlapping")
+			got, err := editsplice.Apply([]byte(src), tc.edits)
+			if err != nil {
+				t.Fatal("apply:", err)
 			}
 			if string(got) != tc.want {
 				t.Errorf("spliced document:\n got: %q\nwant: %q", got, tc.want)
@@ -69,12 +71,90 @@ func TestApply(t *testing.T) {
 // Two edits over the same bytes would each rewrite what the other read. There
 // is no order that gives both what they asked for, so neither one goes in.
 func TestApply_RefusesOverlappingEdits(t *testing.T) {
-	_, ok := editsplice.Apply([]byte(src), []editsplice.Edit{
+	_, err := editsplice.Apply([]byte(src), []editsplice.Edit{
 		{Start: 9, End: 21, Text: ""},
 		{Start: 16, End: 20, Text: "9090"},
 	})
-	if ok {
-		t.Error("overlapping edits were accepted")
+	if !errors.Is(err, editsplice.ErrOverlap) {
+		t.Errorf("err = %v, want ErrOverlap", err)
+	}
+}
+
+// An edit that names bytes the document does not have is a bug in whatever built
+// it, and the answer is an error rather than a panic — a patch can come from a
+// caller as well as from an editor.
+func TestApply_RefusesAnEditOutsideTheDocument(t *testing.T) {
+	for name, edit := range map[string]editsplice.Edit{
+		"before the start":      {Start: -1, End: 4},
+		"past the end":          {Start: 4, End: len(src) + 1},
+		"ends before it starts": {Start: 9, End: 4},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := editsplice.Apply([]byte(src), []editsplice.Edit{edit})
+			if !errors.Is(err, editsplice.ErrRange) {
+				t.Errorf("err = %v, want ErrRange", err)
+			}
+			if out != nil {
+				t.Errorf("bytes returned alongside the error: %q", out)
+			}
+		})
+	}
+}
+
+// Ordered is what an editor hands over when it reports its edits instead of
+// applying them: the same edits, in the order a caller reading the document
+// alongside them needs.
+func TestOrdered(t *testing.T) {
+	got, err := editsplice.Ordered([]editsplice.Edit{
+		{Start: 28, End: 32, Text: "yard.example"},
+		{Start: 9, End: 9, Text: "# first\n"},
+		{Start: 9, End: 9, Text: "# second\n"},
+		{Start: 7, End: 8, Text: "a.example"},
+	})
+	if err != nil {
+		t.Fatal("ordered:", err)
+	}
+	want := []editsplice.Edit{
+		{Start: 7, End: 8, Text: "a.example"},
+		{Start: 9, End: 9, Text: "# first\n"},
+		{Start: 9, End: 9, Text: "# second\n"},
+		{Start: 28, End: 32, Text: "yard.example"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("ordered edits:\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestOrdered_RefusesOverlappingEdits(t *testing.T) {
+	_, err := editsplice.Ordered([]editsplice.Edit{
+		{Start: 9, End: 21},
+		{Start: 16, End: 20, Text: "9090"},
+	})
+	if !errors.Is(err, editsplice.ErrOverlap) {
+		t.Errorf("err = %v, want ErrOverlap", err)
+	}
+}
+
+// Ordered has no document to measure against, so it catches what an edit says
+// about itself and leaves the rest to Apply.
+func TestOrdered_RefusesASpanThatEndsBeforeItStarts(t *testing.T) {
+	_, err := editsplice.Ordered([]editsplice.Edit{{Start: 9, End: 4}})
+	if !errors.Is(err, editsplice.ErrRange) {
+		t.Errorf("err = %v, want ErrRange", err)
+	}
+}
+
+// The edits a caller passes in stay as they were: Ordered sorts a copy.
+func TestOrdered_LeavesTheEditsAlone(t *testing.T) {
+	edits := []editsplice.Edit{
+		{Start: 16, End: 20, Text: "9090"},
+		{Start: 7, End: 8, Text: "b"},
+	}
+	if _, err := editsplice.Ordered(edits); err != nil {
+		t.Fatal("ordered:", err)
+	}
+	if edits[0].Start != 16 {
+		t.Errorf("the caller's edits were sorted under it: %v", edits)
 	}
 }
 
@@ -82,9 +162,9 @@ func TestApply_RefusesOverlappingEdits(t *testing.T) {
 // new buffer, even when there is nothing to change.
 func TestApply_LeavesTheSourceAlone(t *testing.T) {
 	in := []byte(src)
-	out, ok := editsplice.Apply(in, []editsplice.Edit{{Start: 0, End: 4, Text: "HOST"}})
-	if !ok {
-		t.Fatal("the edit was refused")
+	out, err := editsplice.Apply(in, []editsplice.Edit{{Start: 0, End: 4, Text: "HOST"}})
+	if err != nil {
+		t.Fatal("apply:", err)
 	}
 	out[0] = 'x'
 	if string(in) != src {
@@ -102,7 +182,11 @@ func TestApply_AllocatesTheSameForOneEditAndForMany(t *testing.T) {
 	}
 	in := []byte(src)
 	allocs := func(edits []editsplice.Edit) float64 {
-		return testing.AllocsPerRun(100, func() { editsplice.Apply(in, edits) })
+		return testing.AllocsPerRun(100, func() {
+			if _, err := editsplice.Apply(in, edits); err != nil {
+				t.Error("apply:", err)
+			}
+		})
 	}
 	if got, want := allocs(many), allocs(one); got > want {
 		t.Errorf("8 edits allocate %v, one edit allocates %v", got, want)

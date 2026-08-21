@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	kongfig "github.com/pmarschik/kongfig"
+	"github.com/pmarschik/kongfig/internal/editpatch"
 	"github.com/pmarschik/kongfig/internal/editsplice"
 )
 
@@ -35,6 +36,31 @@ var ErrCannotEdit = errors.New("json: cannot express that as an edit of this doc
 // value JSON has no text for — a NaN, an infinity — cannot be written. The caller
 // can fall back to [Parser.Marshal] and accept a reformatted file.
 func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error) {
+	e, err := p.editor(src, want)
+	if err != nil {
+		return nil, err
+	}
+	return e.apply()
+}
+
+// PatchDocument reports the edits [Parser.EditDocument] would make instead of
+// making them. It implements [kongfig.DocumentPatcher]; call it through
+// [kongfig.PatchDocument] to have the edits checked against want.
+//
+// Applying the patch to src gives what EditDocument returns, so a caller can show
+// the change — a diff, the lines it touches — before it writes anything. It
+// refuses what EditDocument refuses, for the same reasons.
+func (p Parser) PatchDocument(src []byte, want kongfig.ConfigData) (kongfig.DocumentPatch, error) {
+	e, err := p.editor(src, want)
+	if err != nil {
+		return kongfig.DocumentPatch{}, err
+	}
+	return e.patch()
+}
+
+// editor walks the document and collects the edits want implies, which is the
+// work both EditDocument and PatchDocument do before they part ways.
+func (p Parser) editor(src []byte, want kongfig.ConfigData) (*docEditor, error) {
 	got, err := p.Unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("json: read the document to edit: %w", err)
@@ -47,7 +73,7 @@ func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error
 	if err := e.object(root, got, want, ""); err != nil {
 		return nil, err
 	}
-	return e.apply()
+	return e, nil
 }
 
 func cannotEdit(path, why string) error {
@@ -80,13 +106,23 @@ func (e *docEditor) remove(at span) {
 
 // apply splices the collected edits into the document in one pass.
 func (e *docEditor) apply() ([]byte, error) {
-	out, ok := editsplice.Apply(e.src, e.edits)
-	if !ok {
+	out, err := editsplice.Apply(e.src, e.edits)
+	if err != nil {
 		// Two edits over the same bytes would each rewrite what the other
 		// read; refusing is the only safe answer.
-		return nil, fmt.Errorf("%w: two changes over the same text", ErrCannotEdit)
+		return nil, fmt.Errorf("%w: %w", ErrCannotEdit, err)
 	}
 	return out, nil
+}
+
+// patch hands the collected edits over instead of the document they make, in the
+// order a caller reading the document alongside them needs.
+func (e *docEditor) patch() (kongfig.DocumentPatch, error) {
+	patch, err := editpatch.From(e.edits)
+	if err != nil {
+		return kongfig.DocumentPatch{}, fmt.Errorf("%w: %w", ErrCannotEdit, err)
+	}
+	return patch, nil
 }
 
 // value edits one value so it holds want. A value that did not change is left

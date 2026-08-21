@@ -58,17 +58,27 @@ func EditDocument(p Parser, src []byte, want ConfigData) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kongfig: edit document: %w", err)
 	}
-	got, err := p.Unmarshal(out)
-	if err != nil {
-		return nil, fmt.Errorf("%w: the result does not parse: %w", ErrEditNotVerified, err)
-	}
-	if !EqualConfigData(got, want) {
-		if path, differs := firstDifference(got, want, ""); differs {
-			return nil, fmt.Errorf("%w: at %s", ErrEditNotVerified, path)
-		}
-		return nil, ErrEditNotVerified
+	if err := verifyDocument(p, out, want); err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// verifyDocument reads an edited document back and checks that it holds want.
+// Both [EditDocument] and [PatchDocument] go through it: a patch is the edit
+// before it is written, so it earns the same check.
+func verifyDocument(p Parser, out []byte, want ConfigData) error {
+	got, err := p.Unmarshal(out)
+	if err != nil {
+		return fmt.Errorf("%w: the result does not parse: %w", ErrEditNotVerified, err)
+	}
+	if EqualConfigData(got, want) {
+		return nil
+	}
+	if path, differs := firstDifference(got, want, ""); differs {
+		return fmt.Errorf("%w: at %s", ErrEditNotVerified, path)
+	}
+	return ErrEditNotVerified
 }
 
 // firstDifference names a path where got and want disagree, so a failed check

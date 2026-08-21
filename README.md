@@ -435,7 +435,37 @@ unknown label gives [`ErrNoSuchLayer`]. A layer with no document behind it (envi
 flags, defaults) gives [`ErrLayerHasNoDocument`]. The edit goes through `EditDocument`,
 which parses the result and compares it the same way.
 
+### Reporting the change instead of writing it
+
+`kongfig.PatchDocument` gives you the edits that `EditDocument` would make, instead of the
+document that they make:
+
+```go
+patch, err := kongfig.PatchDocument(tomlparser.Default, src, data)
+for _, e := range patch.Edits {
+    fmt.Printf("%d-%d: %q becomes %q\n", e.Start, e.End, src[e.Start:e.End], e.Text)
+}
+out, err := patch.Apply(src) // the same bytes that EditDocument returns
+```
+
+An edit replaces `src[Start:End]` with `Text`. An empty range adds text, and empty text
+removes the range. The offsets count bytes from the start of `src`, the document that you
+passed in. The edits come in ascending order, so you can read the document alongside them.
+
+Use a patch for a diff, for a preview, or for a count of the lines that a change touches.
+`PatchDocument` applies the patch and parses the result before it returns. A patch that
+describes the wrong rewrite is therefore an error and not a diff that you show and then
+write. `Apply` reads `src` and never writes to it, so the same patch applies twice. A
+document that already holds the data gives a patch with no edits.
+
+`parsers/toml`, `parsers/yaml` and `parsers/json` all report their edits, and they refuse
+what their editors refuse. A parser that edits a document but cannot report the edits gives
+[`ErrNoDocumentPatcher`]. A patch that does not fit the document gives
+[`ErrPatchNotApplicable`].
+
 [`ErrEditNotVerified`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrEditNotVerified
+[`ErrNoDocumentPatcher`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrNoDocumentPatcher
+[`ErrPatchNotApplicable`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrPatchNotApplicable
 [`ErrNoSuchPath`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrNoSuchPath
 [`ErrPathNotList`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrPathNotList
 [`ErrNoSuchLayer`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrNoSuchLayer

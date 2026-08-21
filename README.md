@@ -382,6 +382,32 @@ document alone. If a reformat is acceptable, use `Marshal`.
 `ErrNoDocumentEditor`, which is about the parser rather than the data — see
 [docs/implementing-parsers.md](docs/implementing-parsers.md#in-place-editing-documenteditor).
 
+### Editing by path
+
+`EditDocument` takes the whole document as data. That is the primitive, and it is a sharp
+one: a map that forgets a key is a map that removes it. `kongfig.Apply` takes the changes
+themselves instead:
+
+```go
+out, err := kongfig.Apply(tomlparser.Default, src,
+    kongfig.Append("archive", "*.bak"),
+    kongfig.Set("db.primary.host", "db.example"),
+    kongfig.RemoveAt("hosts", 1),
+    kongfig.Unset("legacy"))
+```
+
+`Apply` parses `src`, makes the changes in the order you gave them, and rewrites the
+document through `EditDocument`. The result is parsed and compared the same way.
+
+A path is a dot-path, with a bracket for an element of a list: `hosts[1]`, `dbs[0].host`.
+`Set` builds the mappings on the way down that the data does not have yet. `Unset`,
+`Append` and `RemoveAt` need the path to be there already. A path that is not there gives
+[`ErrNoSuchPath`], and the document stays as it was. An `Append` or a `RemoveAt` on a value
+that is not a list gives [`ErrPathNotList`].
+
+`kongfig.ApplyEdits(data, edits...)` makes the same changes to data you already hold, such
+as the data of one layer.
+
 ### Editing one layer of a loaded config
 
 After a load, the data you hold is the merge of every layer. That merge is the wrong thing
@@ -391,8 +417,7 @@ the data of one layer instead:
 
 ```go
 out, err := kf.EditLayer("file", src, func(d kongfig.ConfigData) error {
-    d["archive"] = append(d["archive"].([]any), "*.bak")
-    return nil
+    return kongfig.ApplyEdits(d, kongfig.Append("archive", "*.bak"))
 })
 ```
 
@@ -404,6 +429,8 @@ flags, defaults) gives [`ErrLayerHasNoDocument`]. The edit goes through `EditDoc
 which parses the result and compares it the same way.
 
 [`ErrEditNotVerified`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrEditNotVerified
+[`ErrNoSuchPath`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrNoSuchPath
+[`ErrPathNotList`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrPathNotList
 [`ErrNoSuchLayer`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrNoSuchLayer
 [`ErrLayerHasNoDocument`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrLayerHasNoDocument
 

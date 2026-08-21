@@ -382,7 +382,30 @@ document alone. If a reformat is acceptable, use `Marshal`.
 `ErrNoDocumentEditor`, which is about the parser rather than the data — see
 [docs/implementing-parsers.md](docs/implementing-parsers.md#in-place-editing-documenteditor).
 
+### Editing one layer of a loaded config
+
+After a load, the data you hold is the merge of every layer. That merge is the wrong thing
+to write into a file. It carries the values of the environment and the flags into the file,
+and it removes every key that a higher layer replaced. `Kongfig.EditLayer` gives your edit
+the data of one layer instead:
+
+```go
+out, err := kf.EditLayer("file", src, func(d kongfig.ConfigData) error {
+    d["archive"] = append(d["archive"].([]any), "*.bak")
+    return nil
+})
+```
+
+The source is the label of the layer, the one you gave to `Load`. `src` is the document as
+you read it. kongfig does not know which file the bytes of a layer came from. It therefore
+neither reads nor writes the file: you pass the bytes in, and you write the result out. An
+unknown label gives [`ErrNoSuchLayer`]. A layer with no document behind it (environment,
+flags, defaults) gives [`ErrLayerHasNoDocument`]. The edit goes through `EditDocument`,
+which parses the result and compares it the same way.
+
 [`ErrEditNotVerified`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrEditNotVerified
+[`ErrNoSuchLayer`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrNoSuchLayer
+[`ErrLayerHasNoDocument`]: https://pkg.go.dev/github.com/pmarschik/kongfig#ErrLayerHasNoDocument
 
 ## Validation
 

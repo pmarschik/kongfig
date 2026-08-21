@@ -129,6 +129,11 @@ and compares it against `want` before it returns the bytes. It returns
 parser has no editor. Do not skip that wrapper in your own tests. Text surgery is only as
 safe as its verification.
 
+A caller that loaded the file into a `Kongfig` reaches the editor through
+`Kongfig.EditLayer(source, src, mutate)`. That function builds `want` from the data of one
+layer, not from the merge of all layers. The parser sees the same call either way, and
+neither entry point reads or writes a file.
+
 Both built-in editors work from positions, not from a re-render. `parsers/yaml` reads the
 positions from `yaml.Node`. `parsers/toml` has its own scanner (`parsers/toml/scan.go`),
 because `github.com/BurntSushi/toml` does not report them. Every such scan must be

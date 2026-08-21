@@ -68,6 +68,20 @@ func (p Parser) inlinePolicyFor(checkWidth bool) inlinePolicy {
 	}
 }
 
+// writeOpts are the layout options for producing a file rather than a view of
+// one: no comments, no nil values, and terminal width left out of it, so what is
+// written does not depend on the terminal that wrote it. Both [Parser.MarshalCtx]
+// and [Parser.EditDocument] start here, which is what makes a key an edit adds
+// take the shape Marshal would have given it.
+func (p Parser) writeOpts() tomlRenderOpts {
+	return tomlRenderOpts{
+		indent:       p.effectiveIndent(),
+		inline:       p.inlinePolicyFor(false),
+		omitNil:      true,
+		omitComments: true,
+	}
+}
+
 // Default is a ready-to-use Parser instance.
 var Default = &Parser{}
 
@@ -146,12 +160,7 @@ func (p Parser) Marshal(data kongfig.ConfigData) ([]byte, error) {
 // [kongfig.WithRenderKeyOrderCtx] and [kongfig.WithRenderKeySortCtx] for building
 // such a context.
 func (p Parser) MarshalCtx(ctx context.Context, data kongfig.ConfigData) ([]byte, error) {
-	opts := tomlRenderOpts{
-		indent:       p.effectiveIndent(),
-		inline:       p.inlinePolicyFor(false),
-		omitNil:      true,
-		omitComments: true,
-	}
+	opts := p.writeOpts()
 	opts.inline.ctxPaths = kongfig.InlineTablesKey.GetAll(ctx)
 	// Width is ignored when writing a file, but an overflow mark implies an inline
 	// one, so a field tagged only ,overflow still inlines here.

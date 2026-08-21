@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	kongfig "github.com/pmarschik/kongfig"
+	"github.com/pmarschik/kongfig/internal/editsplice"
 	goyaml "gopkg.in/yaml.v3"
 )
 
@@ -66,51 +67,33 @@ type span struct {
 	end   int
 }
 
-// docEdit replaces the bytes of at with text; an empty span inserts, empty text
-// deletes.
-type docEdit struct {
-	text string
-	at   span
-}
-
 // docEditor collects the edits a data change implies and splices them in at the
 // end, so a refusal anywhere leaves the document untouched.
 type docEditor struct {
 	src   []byte
 	lines []int // byte offset of each line start
-	edits []docEdit
+	edits []editsplice.Edit
 }
 
 func (e *docEditor) replace(at span, text string) {
-	e.edits = append(e.edits, docEdit{at: at, text: text})
+	e.edits = append(e.edits, editsplice.Edit{Start: at.start, End: at.end, Text: text})
 }
 
 func (e *docEditor) insert(at int, text string) {
-	e.edits = append(e.edits, docEdit{at: span{start: at, end: at}, text: text})
+	e.edits = append(e.edits, editsplice.Edit{Start: at, End: at, Text: text})
 }
 
 func (e *docEditor) remove(at span) {
-	e.edits = append(e.edits, docEdit{at: at})
+	e.edits = append(e.edits, editsplice.Edit{Start: at.start, End: at.end})
 }
 
-// apply splices the edits in from the back, so each one's offsets still refer to
-// the document it was measured against.
+// apply splices the collected edits into the document in one pass.
 func (e *docEditor) apply() ([]byte, error) {
-	if len(e.edits) == 0 {
-		return slices.Clone(e.src), nil
-	}
-	edits := slices.Clone(e.edits)
-	slices.SortStableFunc(edits, func(a, b docEdit) int { return b.at.start - a.at.start })
-	out := slices.Clone(e.src)
-	prev := len(e.src)
-	for _, ed := range edits {
-		if ed.at.end > prev {
-			// Two edits over the same bytes would each rewrite what the other
-			// read; refusing is the only safe answer.
-			return nil, fmt.Errorf("%w: two changes over the same text", ErrCannotEdit)
-		}
-		out = slices.Concat(out[:ed.at.start], []byte(ed.text), out[ed.at.end:])
-		prev = ed.at.start
+	out, ok := editsplice.Apply(e.src, e.edits)
+	if !ok {
+		// Two edits over the same bytes would each rewrite what the other
+		// read; refusing is the only safe answer.
+		return nil, fmt.Errorf("%w: two changes over the same text", ErrCannotEdit)
 	}
 	return out, nil
 }

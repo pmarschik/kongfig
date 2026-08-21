@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	kongfig "github.com/pmarschik/kongfig"
+	"github.com/pmarschik/kongfig/internal/editsplice"
 )
 
 // EditDocument rewrites src so it holds want, touching only the text the data
@@ -20,8 +21,9 @@ import (
 // A change TOML cannot express as an edit of *this* document is refused rather
 // than guessed at, and the document is left alone. What it refuses:
 //
-//   - a new key whose value is a table or a list of tables, which would need a
-//     section the document does not have
+//   - a new key whose value needs a section the document does not have: a table,
+//     or a list of tables too big for the one-line form [Parser.Marshal] writes
+//     small ones in
 //   - a new element for a list of tables written as [[header]] blocks
 //   - a new key in a table the document only names in a dotted key
 //
@@ -35,7 +37,7 @@ func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	e := &docEditor{src: src}
+	e := &docEditor{src: src, opts: p.writeOpts()}
 	if err := e.table(root, got, want, ""); err != nil {
 		return nil, err
 	}
@@ -53,50 +55,33 @@ func cannotEdit(path, why string) error {
 	return fmt.Errorf("%w: %s: %s", ErrCannotEdit, path, why)
 }
 
-// docEdit replaces the bytes of at with text; an empty span inserts, empty text
-// deletes.
-type docEdit struct {
-	text string
-	at   span
-}
-
 // docEditor collects the edits a data change implies and splices them in at the
 // end, so a refusal anywhere leaves the document untouched.
 type docEditor struct {
 	src   []byte
-	edits []docEdit
+	edits []editsplice.Edit
+	opts  tomlRenderOpts
 }
 
 func (e *docEditor) replace(at span, text string) {
-	e.edits = append(e.edits, docEdit{at: at, text: text})
+	e.edits = append(e.edits, editsplice.Edit{Start: at.start, End: at.end, Text: text})
 }
 
 func (e *docEditor) insert(at int, text string) {
-	e.edits = append(e.edits, docEdit{at: span{start: at, end: at}, text: text})
+	e.edits = append(e.edits, editsplice.Edit{Start: at, End: at, Text: text})
 }
 
 func (e *docEditor) remove(at span) {
-	e.edits = append(e.edits, docEdit{at: at})
+	e.edits = append(e.edits, editsplice.Edit{Start: at.start, End: at.end})
 }
 
-// apply splices the edits in from the back, so each one's offsets still refer to
-// the document it was measured against.
+// apply splices the collected edits into the document in one pass.
 func (e *docEditor) apply() ([]byte, error) {
-	if len(e.edits) == 0 {
-		return slices.Clone(e.src), nil
-	}
-	edits := slices.Clone(e.edits)
-	slices.SortStableFunc(edits, func(a, b docEdit) int { return b.at.start - a.at.start })
-	out := slices.Clone(e.src)
-	prev := len(e.src)
-	for _, ed := range edits {
-		if ed.at.end > prev {
-			// Two edits over the same bytes would each rewrite what the other
-			// read; refusing is the only safe answer.
-			return nil, fmt.Errorf("%w: two changes over the same text", ErrCannotEdit)
-		}
-		out = slices.Concat(out[:ed.at.start], []byte(ed.text), out[ed.at.end:])
-		prev = ed.at.start
+	out, ok := editsplice.Apply(e.src, e.edits)
+	if !ok {
+		// Two edits over the same bytes would each rewrite what the other
+		// read; refusing is the only safe answer.
+		return nil, fmt.Errorf("%w: two changes over the same text", ErrCannotEdit)
 	}
 	return out, nil
 }
@@ -174,11 +159,35 @@ func (e *docEditor) insertKey(node *docNode, key string, value any, path string)
 		e.insert(node.insertAt, text)
 		return nil
 	}
-	if needsSection(value) {
+	if needsSection(value) && !e.writesOnOneLine(value, at) {
 		return cannotEdit(at, "its value needs a section the document does not have")
 	}
 	e.insert(node.insertAt, node.indent+tomlKey(key)+" = "+tomlValue(value)+"\n")
 	return nil
+}
+
+// writesOnOneLine reports whether a value [needsSection] rejected has a
+// key/value form after all. A list of tables does: the block form is the verbose
+// one, so [Parser.Marshal] writes small elements as inline tables on one line,
+// and refusing an edit the same parser would happily write is a refusal for
+// nothing. A table does not — a section is what Marshal gives it, and collapsing
+// it onto a line would be a layout the author never chose.
+func (e *docEditor) writesOnOneLine(value any, path string) bool {
+	list, isList := wantList(value)
+	if !isList || len(list) == 0 {
+		return false
+	}
+	elems := make([]any, 0, len(list))
+	for _, elem := range list {
+		table, isTable := wantTable(elem)
+		if !isTable {
+			return false
+		}
+		elems = append(elems, kongfig.ToConfigData(table))
+	}
+	// Depth is only read for the width comparison, which the write path leaves
+	// out: what is written must not depend on the terminal that wrote it.
+	return tableArrayInlines(elems, path, 0, e.opts)
 }
 
 // removeChild takes out the text that writes one key: its line, its section, or

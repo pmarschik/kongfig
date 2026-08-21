@@ -94,18 +94,36 @@ func (d ConfigData) LookupPath(path string) (any, bool) {
 	return d.existsAt(strings.Split(path, "."))
 }
 
-// Clone returns a deep copy of d. Nested ConfigData sub-trees are cloned recursively.
-// Mutations to the returned ConfigData do not affect d.
+// Clone returns a deep copy of d. Nested ConfigData sub-trees are cloned
+// recursively, through the lists that hold them — an array of tables is a list
+// of sub-trees, and sharing them would let an edit of the copy reach back into
+// the original. Mutations to the returned ConfigData do not affect d.
+//
+// Leaf values are copied as they are: a list of strings, a time, a slice a
+// decoder handed back typed. Nothing here changes those, so sharing them is
+// sharing something nobody writes to.
 func (d ConfigData) Clone() ConfigData {
 	out := make(ConfigData, len(d))
 	for k, v := range d {
-		if sub, ok := v.(ConfigData); ok {
-			out[k] = sub.Clone()
-		} else {
-			out[k] = v
-		}
+		out[k] = cloneValue(v)
 	}
 	return out
+}
+
+// cloneValue copies the sub-trees inside a value and leaves the leaves alone.
+func cloneValue(v any) any {
+	switch val := v.(type) {
+	case ConfigData:
+		return val.Clone()
+	case []any:
+		out := make([]any, len(val))
+		for i, elem := range val {
+			out[i] = cloneValue(elem)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // SubTree returns a deep copy of the sub-tree rooted at the given dot-delimited path.

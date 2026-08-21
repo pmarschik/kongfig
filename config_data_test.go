@@ -69,6 +69,32 @@ func TestToConfigData_NormalizesNestedTypedSlices(t *testing.T) {
 	}
 }
 
+// A clone is what a caller edits when it must be able to compare the result
+// against what it started with — an edit of a config file does exactly that. A
+// list of tables is where a shallow copy shows: the elements are sub-trees, and
+// a clone that shares them writes the caller's change into the original too, so
+// the comparison reports nothing changed.
+func TestClone_CopiesTheTablesInsideAList(t *testing.T) {
+	data := kongfig.ToConfigData(map[string]any{
+		"aux": []any{map[string]any{"dir": "one", "parent": "old"}},
+	})
+
+	clone := data.Clone()
+	elem, ok := clone["aux"].([]any)[0].(kongfig.ConfigData)
+	if !ok {
+		t.Fatalf("aux[0] is %T, want kongfig.ConfigData", clone["aux"].([]any)[0])
+	}
+	elem["parent"] = "new"
+
+	original, _ := data["aux"].([]any)[0].(kongfig.ConfigData)
+	if original["parent"] != "old" {
+		t.Errorf("editing the clone changed the original: parent = %v", original["parent"])
+	}
+	if kongfig.EqualConfigData(data, clone) {
+		t.Error("the clone and the original compare equal after the clone was edited")
+	}
+}
+
 // A map keyed by something other than string is data, not a sub-tree: ConfigData
 // cannot hold it, so it is left as it is rather than half-converted.
 func TestToConfigData_LeavesNonStringKeyedMapsAlone(t *testing.T) {

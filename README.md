@@ -378,8 +378,15 @@ that needs a TOML section the file does not have, and a YAML value spread over s
 lines. `EditDocument` refuses such a change with the parser's own error, and it leaves the
 document alone. If a reformat is acceptable, use `Marshal`.
 
-`parsers/toml` and `parsers/yaml` implement it. A parser without an editor reports
-`ErrNoDocumentEditor`, which is about the parser rather than the data — see
+`parsers/toml`, `parsers/yaml` and `parsers/json` implement it. The JSON editor keeps the
+comments of a JSONC document (`jsonparser.WithComments`) the same way. A new key or element
+joins the layout of the container that it goes into: a line of its own in a document
+written across lines, the line itself in a document written on one. JSON has text for every
+value that a config holds. The JSON editor therefore refuses little: a document with no
+object at its root, and a value such as a NaN that JSON cannot write.
+
+A parser without an editor reports `ErrNoDocumentEditor`, which is about the parser rather
+than the data — see
 [docs/implementing-parsers.md](docs/implementing-parsers.md#in-place-editing-documenteditor).
 
 ### Editing by path

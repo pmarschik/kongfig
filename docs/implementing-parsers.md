@@ -90,8 +90,8 @@ if src, ok := kf.SourceFor("db.port"); ok {
 `Marshal` writes a document. `EditDocument` changes one. A program that maintains the
 config file of a user needs the second method. The comments, the key order, the indentation
 and the quoting that the user wrote must survive a one-value change. Implement
-`EditDocument` when the format has a hand-written layout to keep — `parsers/toml` and
-`parsers/yaml` do, `parsers/json` does not.
+`EditDocument` when the format has a hand-written layout to keep. `parsers/toml`,
+`parsers/yaml` and `parsers/json` all do.
 
 ```go
 func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error)
@@ -118,10 +118,15 @@ Five rules:
   Three examples exist. The first is a new TOML key whose value needs a section that the
   file does not have. The second is a YAML value across several lines. The third is a
   mapping that merges another mapping. Return an error, write nothing, and let the caller
-  use `Marshal` instead.
-- **Collect the edits, then splice.** Apply the byte ranges from the back. Every offset
-  then stays correct against the document that you read it from, and a refusal halfway
-  through leaves the document unchanged.
+  use `Marshal` instead. A format that can write every value refuses little: the JSON
+  editor refuses a document with no object at its root, and a value that JSON has no text
+  for.
+- **Collect the edits, then splice them in one pass.** Give the byte ranges to
+  `internal/editsplice.Apply`. It sorts them, sizes one buffer for the whole set, and
+  copies the document once. Every offset stays correct against the document that you read
+  it from, because nothing moves until the end. A refusal halfway through therefore leaves
+  the document unchanged. Two edits over the same bytes are a bug in the editor, and
+  `Apply` reports them instead of writing a broken document.
 
 A caller reaches the editor through `kongfig.EditDocument`. That function parses the result
 and compares it against `want` before it returns the bytes. It returns
@@ -257,6 +262,9 @@ The test file of each parser must cover:
 - `Comments: true` enables JSONC mode. The parser removes `//` and `/* */` before the parse, and it uses `//` for inline annotations.
 - `Compact: true` renders with no indentation.
 - Help texts and annotations appear only in JSONC mode (`Comments: true`).
+- `EditDocument` reads the document as text (`scan.go`), so every value keeps the byte range that it was written in. In JSONC mode the scan steps over a comment as if it were space, which is why a comment survives an edit.
+- JSON writes several members on one line, which TOML and YAML do not. A member that has its line to itself goes away with the line. A member that shares its line goes away with the comma that separates it from the next one.
+- The last member of a container has no comma after it. Its removal therefore takes the comma of the member before it as a second edit.
 
 ### TOML (`parsers/toml`)
 

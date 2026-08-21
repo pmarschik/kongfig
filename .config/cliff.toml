@@ -35,6 +35,13 @@ footer = """
 """
 
 [git]
+# Only the root module's tags are releases. The submodule tags
+# (kong/vX.Y.Z, parsers/toml/vX.Y.Z, …) sit on the same commit and would
+# otherwise be picked as "the latest tag": --bumped-version then answers
+# with a name like `style/charming/v0.5.0`, because it sorts after
+# `v0.5.0`, and the release tasks pin every go.mod to it.
+tag_pattern = "^v[0-9]"
+
 commit_parsers = [
     { message = "^feat", group = "<!-- 0 -->🚀 Features" },
     { message = "^fix", group = "<!-- 1 -->🐛 Bug Fixes" },

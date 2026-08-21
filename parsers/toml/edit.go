@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	kongfig "github.com/pmarschik/kongfig"
 )
@@ -194,78 +193,6 @@ func (e *docEditor) removeChild(node *docNode, key, path string) error {
 		at = e.withSeparator(at)
 	}
 	e.remove(at)
-	return nil
-}
-
-// list edits a list element by element. Elements the document already has keep
-// their place and their layout; extra ones are appended and surplus ones dropped
-// from the end.
-func (e *docEditor) list(node *docNode, got any, want []any, path string) error {
-	if node == nil || (node.kind != nodeArray && node.kind != nodeTableArray) {
-		return e.rewrite(node, want, path)
-	}
-	gotList, _ := wantList(got)
-	shared := min(len(node.elems), len(want))
-	for i := range shared {
-		var gotElem any
-		if i < len(gotList) {
-			gotElem = gotList[i]
-		}
-		if err := e.value(node.elems[i], gotElem, want[i], joinIndex(path, i)); err != nil {
-			return err
-		}
-	}
-	for i := len(want); i < len(node.elems); i++ {
-		if err := e.removeElem(node, node.elems[i], joinIndex(path, i)); err != nil {
-			return err
-		}
-	}
-	if len(want) > len(node.elems) {
-		return e.appendElems(node, want[len(node.elems):], path)
-	}
-	return nil
-}
-
-// appendElems adds elements to a list, in the layout the list already uses: one
-// per line for a list written across lines, after the last element for one on a
-// single line. All of them go in as one insertion, so they keep their order.
-func (e *docEditor) appendElems(node *docNode, values []any, path string) error {
-	if node.kind != nodeArray {
-		return cannotEdit(path, "a list of sections takes no new element")
-	}
-	var text strings.Builder
-	for i, v := range values {
-		switch {
-		case node.multiline:
-			if i == 0 && !node.comma && len(node.elems) > 0 {
-				text.WriteString(",")
-			}
-			text.WriteString("\n" + node.indent + tomlValue(v) + ",")
-		case len(node.elems) == 0 && i == 0:
-			text.WriteString(tomlValue(v))
-		default:
-			text.WriteString(", " + tomlValue(v))
-		}
-	}
-	e.insert(node.insertAt, text.String())
-	return nil
-}
-
-// removeElem takes an element out of a list: its whole line in a list written
-// across lines, otherwise the element and the separator that follows it.
-func (e *docEditor) removeElem(node, elem *docNode, path string) error {
-	if elem.del.empty() {
-		return cannotEdit(path, "there is no text to remove")
-	}
-	if node.kind == nodeTableArray {
-		e.remove(elem.del)
-		return nil
-	}
-	if node.multiline {
-		e.remove(e.wholeLines(elem.del))
-		return nil
-	}
-	e.remove(e.withSeparator(elem.del))
 	return nil
 }
 

@@ -367,6 +367,12 @@ is a key that the rewrite removes. `EditDocument` parses the result and compares
 that data before it returns. A botched rewrite is therefore an error
 ([`ErrEditNotVerified`]) and not a file that you already wrote.
 
+Lists are edited element by element, and the elements are matched by value rather than by
+position: take one out of the middle and the editor removes its lines, leaving the elements
+below it — and the comments beside them — as they were. A comment line directly above an
+element belongs to that element, so it goes away with the element and a new element goes in
+above it.
+
 Some changes are not expressible as an edit of _this_ document. Two examples: a new key
 that needs a TOML section the file does not have, and a YAML value spread over several
 lines. `EditDocument` refuses such a change with the parser's own error, and it leaves the

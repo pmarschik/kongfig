@@ -228,70 +228,6 @@ func keyLines(key string, value any, indent int, path string) (string, error) {
 	return out.String(), nil
 }
 
-// sequence edits a list element by element. Elements the document already has
-// keep their place and their layout; extra ones join the list where it is written
-// and surplus ones are dropped from the end.
-func (e *docEditor) sequence(node *goyaml.Node, got any, want []any, path string, indent int) error {
-	if node.Style&goyaml.FlowStyle != 0 {
-		return e.flowSequence(node, got, want, path)
-	}
-	gotList, _ := wantList(got)
-	for i := range min(len(node.Content), len(want)) {
-		var gotElem any
-		if i < len(gotList) {
-			gotElem = gotList[i]
-		}
-		dash, ok := e.dashIndent(node.Content[i])
-		if !ok {
-			dash = indent
-		}
-		if err := e.value(node.Content[i], gotElem, want[i], joinIndex(path, i), dash); err != nil {
-			return err
-		}
-	}
-	for i := len(want); i < len(node.Content); i++ {
-		elem := node.Content[i]
-		dash, ok := e.dashIndent(elem)
-		if !ok {
-			return cannotEdit(joinIndex(path, i), "the element does not start its own line")
-		}
-		e.remove(span{
-			start: e.lineStartAt(e.offset(elem)),
-			end:   e.blockEnd(e.offset(elem), dash),
-		})
-	}
-	if len(want) > len(node.Content) {
-		return e.appendElems(node, want[len(node.Content):], path)
-	}
-	return nil
-}
-
-// appendElems adds elements to a block list, one per line, indented and quoted
-// like the ones already there.
-func (e *docEditor) appendElems(node *goyaml.Node, values []any, path string) error {
-	if len(node.Content) == 0 {
-		return cannotEdit(path, "the list has no element to write after")
-	}
-	last := node.Content[len(node.Content)-1]
-	dash, ok := e.dashIndent(last)
-	if !ok {
-		return cannotEdit(path, "the last element does not start its own line")
-	}
-	var text strings.Builder
-	for i, v := range values {
-		written, err := encode(v, last, joinIndex(path, len(node.Content)+i))
-		if err != nil {
-			return err
-		}
-		if strings.Contains(written, "\n") {
-			return cannotEdit(joinIndex(path, len(node.Content)+i), "the element does not fit on one line")
-		}
-		text.WriteString(strings.Repeat(" ", dash) + "- " + written + "\n")
-	}
-	e.insert(e.blockEnd(e.offset(last), dash), text.String())
-	return nil
-}
-
 // flowMapping edits a { key: value } mapping, where a new key goes before the
 // closing brace.
 func (e *docEditor) flowMapping(node *goyaml.Node, got any, want map[string]any, path string) error {
@@ -333,56 +269,6 @@ func (e *docEditor) flowMapping(node *goyaml.Node, got any, want map[string]any,
 		}
 		e.remove(e.withSeparator(span{start: e.offset(node.Content[i]), end: valueEnd.end}))
 	}
-	return nil
-}
-
-// flowSequence edits a [ a, b ] list, which stays on its line.
-func (e *docEditor) flowSequence(node *goyaml.Node, got any, want []any, path string) error {
-	end, err := e.flowEnd(node, path)
-	if err != nil {
-		return err
-	}
-	gotList, _ := wantList(got)
-	lastEnd := e.offset(node) + 1
-	for i := range min(len(node.Content), len(want)) {
-		var gotElem any
-		if i < len(gotList) {
-			gotElem = gotList[i]
-		}
-		if err := e.value(node.Content[i], gotElem, want[i], joinIndex(path, i), 0); err != nil {
-			return err
-		}
-	}
-	for i := range node.Content {
-		at, err := e.tokenSpan(node.Content[i], joinIndex(path, i))
-		if err != nil {
-			return err
-		}
-		if i >= len(want) {
-			e.remove(e.withSeparator(at))
-			continue
-		}
-		lastEnd = at.end
-	}
-	if len(want) <= len(node.Content) {
-		return nil
-	}
-	var text strings.Builder
-	for i, v := range want[len(node.Content):] {
-		written, err := encode(v, lastScalar(node), joinIndex(path, len(node.Content)+i))
-		if err != nil {
-			return err
-		}
-		if i > 0 || len(node.Content) > 0 {
-			text.WriteString(", ")
-		}
-		text.WriteString(written)
-	}
-	if len(node.Content) == 0 {
-		e.insert(end-1, text.String())
-		return nil
-	}
-	e.insert(lastEnd, text.String())
 	return nil
 }
 
@@ -639,19 +525,6 @@ func lineStarts(src []byte) []int {
 func isInlineSpace(c byte) bool { return c == ' ' || c == '\t' }
 
 // --- values ---
-
-// lastScalar is the last element of a flow list when it is a scalar, whose
-// quoting a new element follows.
-func lastScalar(node *goyaml.Node) *goyaml.Node {
-	if len(node.Content) == 0 {
-		return nil
-	}
-	last := node.Content[len(node.Content)-1]
-	if last.Kind != goyaml.ScalarNode {
-		return nil
-	}
-	return last
-}
 
 func isCollection(v any) bool {
 	if _, isMap := wantMapping(v); isMap {

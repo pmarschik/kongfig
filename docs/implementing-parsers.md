@@ -97,7 +97,7 @@ and the quoting that the user wrote must survive a one-value change. Implement
 func (p Parser) EditDocument(src []byte, want kongfig.ConfigData) ([]byte, error)
 ```
 
-Four rules:
+Five rules:
 
 - **`want` is the whole document, not a patch.** A key that it does not mention is a key
   that the rewrite removes. A caller builds `want` from a parse of the document and an edit
@@ -106,6 +106,14 @@ Four rules:
   document (`kongfig.EqualValues` compares values, not the Go types that spell them). Do
   not touch anything that did not change, because a rewrite of an unchanged value
   reformats it.
+- **Match the elements of a list by identity, not by position.** Element _i_ of the edited
+  list is not element _i_ of the document once an element goes away or joins in the middle.
+  Pair by position and every element below the edit is rewritten, which hands each trailing
+  comment to its neighbour's value. `internal/editalign` reads the two lists and returns the
+  rewrites, deletions and insertions that turn one into the other; fall back to pairing by
+  position only when the parsed list and the written one disagree about how many elements
+  there are. Count the comment lines directly above an element as part of that element's
+  text: they go away with it, and a new element goes in above them.
 - **Refuse what the format cannot express as an edit of _this_ document.** Do not guess.
   Three examples exist. The first is a new TOML key whose value needs a section that the
   file does not have. The second is a YAML value across several lines. The third is a

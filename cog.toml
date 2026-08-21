@@ -6,6 +6,7 @@
 # - core             root package / load-get-render pipeline / public API glue
 # - casing           casing/ package — name mapper functions (KebabCase, SnakeCase, …)
 # - schema           schema/ package — FieldTag, ParseFieldTag, RedactedPaths, SplitPaths, …
+# - render           render/ package — render pipeline helpers, key order, omitempty
 # - validation       validation package
 # - migration        migrate.go — AddRename, MigrationPolicy, discover.Deprecated
 # - mergefuncs       merge strategy helpers
@@ -36,6 +37,7 @@ scopes = [
   "core",
   "casing",
   "schema",
+  "render",
   "validation",
   "migration",
   "mergefuncs",

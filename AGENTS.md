@@ -23,6 +23,7 @@ Scopes: defined in `cog.toml` — update that file when adding new scopes.
 Current scopes:
 
 - `core` — root package / load-get-render pipeline / shared public API glue
+- `render` — `render/`
 - `validation` — `validation/`
 - `mergefuncs` — `mergefuncs/`
 - `parsers` — cross-parser work spanning multiple parser packages

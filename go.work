@@ -15,3 +15,15 @@ use (
 	./providers/file/discover/vcs
 	./style/charming
 )
+
+replace github.com/pmarschik/kongfig v0.6.0 => .
+
+replace github.com/pmarschik/kongfig/kong v0.6.0 => ./kong
+
+replace github.com/pmarschik/kongfig/parsers/toml v0.6.0 => ./parsers/toml
+
+replace github.com/pmarschik/kongfig/parsers/yaml v0.6.0 => ./parsers/yaml
+
+replace github.com/pmarschik/kongfig/providers/file v0.6.0 => ./providers/file
+
+replace github.com/pmarschik/kongfig/style/charming v0.6.0 => ./style/charming

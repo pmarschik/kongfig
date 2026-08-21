@@ -1,3 +1,65 @@
+## [v0.6.0] - 2026-08-21
+
+### 🚀 Features
+
+- _(parsers/toml)_ Inline tables and configurable nested indentation
+- _(core)_ Register help= struct tags automatically in NewFor[T]
+- _(core)_ Source positions for file-backed layers
+- _(core)_ Descend into map and slice element types when collecting inline marks
+- _(schema)_ Read overflow, omitempty and sortby marks from struct tags
+- _(core)_ Merge the layers' document key order and pass it to marshalers
+- _(render)_ Leave omitempty paths out of output when they hold nothing
+- _(core)_ Order map entries by a value in them
+- _(parsers/yaml)_ Honor key order, sort hooks and omitempty in MarshalCtx
+- _(parsers/json)_ Honor key order, sort hooks and omitempty in MarshalCtx
+- _(parsers/toml)_ Inline tables, namespace help, omitempty and wrap-off layout
+- _(core)_ Compare config values whatever Go type spells them
+- _(core)_ EditDocument rewrites a document in place, verified
+- _(parsers/toml)_ Edit a document in place, keeping comments and layout
+- _(parsers/yaml)_ Edit a document in place, keeping comments and layout
+- _(parsers/yaml)_ Collapse marked mappings into flow mappings
+- _(core)_ Add render options to suppress provenance and help comments separately
+- _(kong/show)_ Add --no-comments, --no-provenance and --no-help flags
+- _(core)_ Add Kongfig.EditLayer to edit one layer's document
+- _(core)_ Add path edits (Set/Unset/Append/RemoveAt) and Apply
+- _(parsers/json)_ Edit a JSON document in place
+- _(core)_ Report an edit as a DocumentPatch instead of a document
+
+### 🐛 Bug Fixes
+
+- _(parsers/toml)_ Emit documents that round-trip
+- _(parsers/yaml)_ Render a nil leaf as null
+- _(core)_ Normalize maps hiding inside typed slices
+- _(core)_ Keep annotations inline when one wide line cannot hold its own
+- _(parsers/toml)_ Fold long values clear of their provenance comment
+- _(parsers)_ Keep comments with their list elements through an edit
+- _(core)_ Clone the tables inside a list deeply
+
+### 💼 Other
+
+- _(release)_ Source the release tasks from the shared devkit repo
+
+### 🚜 Refactor
+
+- _(core)_ Add internal/editalign to match list elements by identity
+- _(parsers)_ Splice document edits in one pass via internal/editsplice
+
+### 📚 Documentation
+
+- Document key order, sortby, omitempty and the TOML layout options
+- Document in-place editing with DocumentEditor
+- Document AnnMarkerFixed and the per-line annotation fallback
+- Rewrite the documentation in Simplified Technical English
+
+### 🧪 Testing
+
+- _(parsers/toml)_ Sweep terminal widths for the folded-string annotation
+
+### ⚙️ Miscellaneous Tasks
+
+- Update go.sum after v0.5.0
+- _(providers/file)_ Silence two intentional nilerr findings
+
 ## [v0.5.0] - 2026-05-06
 
 ### 🚀 Features
@@ -125,6 +187,7 @@
 ### 🚀 Features
 
 - Kongfig initial public release
+  [v0.6.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.6.0
   [v0.5.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.5.0
   [v0.4.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.4.0
   [v0.3.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.3.0

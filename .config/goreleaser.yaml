@@ -9,6 +9,10 @@ release:
     owner: pmarschik
     name: kongfig
   prerelease: auto
+  # `release:push` writes the notes for one version; this workflow only has the
+  # whole CHANGELOG.md to offer. Spelling out the default keeps a re-run — a
+  # `workflow_dispatch` after a missed tag event — from replacing them.
+  mode: keep-existing
 
 changelog:
   disable: true

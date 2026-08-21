@@ -7,7 +7,4 @@ require (
 	github.com/pmarschik/kongfig v0.6.0
 )
 
-require (
-	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/pmarschik/kongfig/parsers/yaml v0.6.0 // indirect
-)
+require github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

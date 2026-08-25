@@ -103,17 +103,19 @@ func LocateFirst(locs ...FileLocator) FileLocator {
 }
 
 // XDGDirs returns a DirProvider that yields XDG config base directories.
-// Returns [$XDG_CONFIG_HOME (if set), ~/.config (if home available)].
+// Returns [$XDG_CONFIG_HOME] when that variable is set, otherwise
+// [~/.config] when the home directory is available.
+// The spec makes ~/.config the default for an unset XDG_CONFIG_HOME, not a
+// second place to look, so a set variable replaces it.
 func XDGDirs() DirProvider {
 	return func(_ context.Context) ([]DirEntry, error) {
-		var entries []DirEntry
 		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-			entries = append(entries, DirEntry{xdg, "$xdg", "$XDG_CONFIG_HOME"})
+			return []DirEntry{{xdg, "$xdg", "$XDG_CONFIG_HOME"}}, nil
 		}
 		if home, err := os.UserHomeDir(); err == nil {
-			entries = append(entries, DirEntry{filepath.Join(home, ".config"), "~/.config", "~/.config"})
+			return []DirEntry{{filepath.Join(home, ".config"), "~/.config", "~/.config"}}, nil
 		}
-		return entries, nil
+		return nil, nil
 	}
 }
 

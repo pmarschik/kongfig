@@ -40,8 +40,11 @@ func findVCSRoot(start, marker string, maxDepth int) string {
 }
 
 // XDG returns a Discoverer that searches:
-//  1. $XDG_CONFIG_HOME/<app>/config.<ext>
-//  2. ~/.config/<app>/config.<ext>
+//   - $XDG_CONFIG_HOME/<app>/config.<ext> when XDG_CONFIG_HOME is set
+//   - ~/.config/<app>/config.<ext> otherwise
+//
+// A set XDG_CONFIG_HOME replaces the ~/.config search rather than preceding it,
+// because the spec makes ~/.config the default for an unset variable.
 //
 // The app name is read from ctx via [kongfig.AppName]. Returns no results if no
 // app name is set in ctx.

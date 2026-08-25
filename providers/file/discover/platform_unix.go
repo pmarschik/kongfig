@@ -9,16 +9,15 @@ import (
 
 // platformUserBaseDirs returns user-level config base directories on Linux/Unix,
 // without the appname component.
-// Search order: $XDG_CONFIG_HOME, ~/.config.
+// Search order: $XDG_CONFIG_HOME when that variable is set, otherwise ~/.config.
 func platformUserBaseDirs() []DirEntry {
-	var entries []DirEntry
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		entries = append(entries, DirEntry{xdg, "$xdg", "$XDG_CONFIG_HOME"})
+		return []DirEntry{{xdg, "$xdg", "$XDG_CONFIG_HOME"}}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		entries = append(entries, DirEntry{filepath.Join(home, ".config"), "~/.config", "~/.config"})
+		return []DirEntry{{filepath.Join(home, ".config"), "~/.config", "~/.config"}}
 	}
-	return entries
+	return nil
 }
 
 // platformSystemBaseDirs returns system-level config base directories on Linux/Unix,
@@ -29,16 +28,19 @@ func platformSystemBaseDirs() []DirEntry {
 
 // platformUserDirs returns <base>/<app> subdirectories to search for user config
 // files on Linux and other Unix-like systems.
-// Search order: $XDG_CONFIG_HOME/<app>, ~/.config/<app>.
+// Search order: $XDG_CONFIG_HOME/<app> when that variable is set, otherwise
+// ~/.config/<app>.
+// XDG_CONFIG_HOME names the single directory user config lives in, so it replaces
+// the home directory search rather than being tried ahead of it. ~/.config is the
+// fallback the XDG spec defines for an unset variable.
 func platformUserDirs(app string) []string {
-	var dirs []string
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		dirs = append(dirs, filepath.Join(xdg, app))
+		return []string{filepath.Join(xdg, app)}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		dirs = append(dirs, filepath.Join(home, ".config", app))
+		return []string{filepath.Join(home, ".config", app)}
 	}
-	return dirs
+	return nil
 }
 
 // platformSystemDirs returns <base>/<app> subdirectories to search for system

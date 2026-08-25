@@ -148,7 +148,7 @@ providers := fileprovider.DiscoverAll(ctx,
     discover.UserDirs(),          // OS user config dirs (~/.config/app, platform-specific)
     // Note: UserDirs already covers XDG user dirs (~/.config/appname) on Linux/macOS.
     // Use XDG() only when you need to honour $XDG_CONFIG_HOME explicitly.
-    discover.XDG(),               // $XDG_CONFIG_HOME / ~/.config (XDG spec override)
+    discover.XDG(),               // $XDG_CONFIG_HOME, or ~/.config when it is unset
     discover.Workdir(),           // current working directory
     discover.GitRoot(),           // walk up to nearest .git root
     discover.JujutsuRoot(),       // walk up to nearest .jj root
@@ -173,6 +173,12 @@ discover.UserDirs().
 
 The app name is read from `ctx` via `kongfig.AppName`. `SystemDirs()` follows the same
 API for system-wide config directories.
+
+`XDG_CONFIG_HOME` names the one directory user config lives in. When it is set,
+`UserDirs()` searches only under it and skips `~/.config` and
+`~/Library/Application Support`. When it is unset, `UserDirs()` uses those defaults.
+Point `XDG_CONFIG_HOME` at a temporary directory in your own tests to keep discovery
+away from the developer's real config.
 
 ### VCS-aware discoverers
 

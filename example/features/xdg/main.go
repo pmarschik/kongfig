@@ -2,9 +2,9 @@
 // Searches ~/.config/<app>/config.yaml, then ./config.yaml. No --config flag needed.
 //
 // Config search order:
-//  1. $XDG_CONFIG_HOME/xdg-example/config.{yaml,toml}
-//  2. ~/.config/xdg-example/config.{yaml,toml}
-//  3. ./config.{yaml,toml}  (workdir fallback)
+//  1. $XDG_CONFIG_HOME/xdg-example/config.{yaml,toml} when XDG_CONFIG_HOME is set,
+//     otherwise ~/.config/xdg-example/config.{yaml,toml}
+//  2. ./config.{yaml,toml}  (workdir fallback)
 //
 // Run:
 //

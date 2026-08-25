@@ -1,3 +1,25 @@
+## [v0.6.1] - 2026-08-25
+
+### 🐛 Bug Fixes
+
+- _(ci)_ Let a missed release run be dispatched
+- _(ci)_ Drop the goreleaser tool pin
+- _(examples)_ Pin the example modules to a revision that exists
+- _(providers/file)_ Let XDG_CONFIG_HOME replace the home fallback
+
+### 💼 Other
+
+- Wire the repo to devkit's shared Go tooling
+- Regenerate the linter config from devkit
+
+### 🧪 Testing
+
+- _(core)_ Check the type assertions in the ConfigData clone test
+
+### ⚙️ Miscellaneous Tasks
+
+- Update go.sum after v0.6.0
+
 ## [v0.6.0] - 2026-08-21
 
 ### 🚀 Features
@@ -187,6 +209,7 @@
 ### 🚀 Features
 
 - Kongfig initial public release
+  [v0.6.1]: https://github.com/pmarschik/kongfig/releases/tag/v0.6.1
   [v0.6.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.6.0
   [v0.5.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.5.0
   [v0.4.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.4.0

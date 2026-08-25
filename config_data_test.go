@@ -80,13 +80,24 @@ func TestClone_CopiesTheTablesInsideAList(t *testing.T) {
 	})
 
 	clone := data.Clone()
-	elem, ok := clone["aux"].([]any)[0].(kongfig.ConfigData)
+	cloneAux, ok := clone["aux"].([]any)
 	if !ok {
-		t.Fatalf("aux[0] is %T, want kongfig.ConfigData", clone["aux"].([]any)[0])
+		t.Fatalf("clone aux is %T, want []any", clone["aux"])
+	}
+	elem, ok := cloneAux[0].(kongfig.ConfigData)
+	if !ok {
+		t.Fatalf("aux[0] is %T, want kongfig.ConfigData", cloneAux[0])
 	}
 	elem["parent"] = "new"
 
-	original, _ := data["aux"].([]any)[0].(kongfig.ConfigData)
+	dataAux, ok := data["aux"].([]any)
+	if !ok {
+		t.Fatalf("data aux is %T, want []any", data["aux"])
+	}
+	original, ok := dataAux[0].(kongfig.ConfigData)
+	if !ok {
+		t.Fatalf("data aux[0] is %T, want kongfig.ConfigData", dataAux[0])
+	}
 	if original["parent"] != "old" {
 		t.Errorf("editing the clone changed the original: parent = %v", original["parent"])
 	}

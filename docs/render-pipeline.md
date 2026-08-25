@@ -347,9 +347,9 @@ shape is a newline inside an inline table, which TOML 1.1 allows.
 [fields]
   blocked_by = {
     jira = "",
-    link = {direction = "inward", type = "Blocks"},
+    link = { direction = "inward", type = "Blocks" },
     readonly = false,
-    type = "issue_links"
+    type = "issue_links",
   }
 ```
 
@@ -374,7 +374,7 @@ line of its own. A nested table reflows, an array becomes a block, and a string 
       "github@ixopay-org/*-agent*",
     ],
     nest = true,
-    vcs = "jj-colocate"
+    vcs = "jj-colocate",
   }
 ```
 

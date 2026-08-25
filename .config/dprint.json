@@ -1,14 +1,6 @@
 {
+  "extends": "https://raw.githubusercontent.com/pmarschik/devkit/v1/dprint/go.json",
   "includes": [
     "**/*.{json,yaml,yml,toml,md}"
-  ],
-  "excludes": [
-    "vendor/**"
-  ],
-  "plugins": [
-    "https://plugins.dprint.dev/json-0.20.0.wasm",
-    "https://plugins.dprint.dev/markdown-0.20.0.wasm",
-    "https://plugins.dprint.dev/toml-0.7.0.wasm",
-    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm"
   ]
 }

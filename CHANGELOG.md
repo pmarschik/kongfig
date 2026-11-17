@@ -1,3 +1,14 @@
+## [v0.6.2] - 2026-11-17
+
+### 🐛 Bug Fixes
+
+- _(parsers/json)_ Emit redacted values as quoted JSON strings
+- _(kong/show)_ Disable colors for json, NO_COLOR, TERM=dumb and non-TTY output
+
+### ⚙️ Miscellaneous Tasks
+
+- Update go.sum after v0.6.1
+
 ## [v0.6.1] - 2026-08-25
 
 ### 🐛 Bug Fixes
@@ -209,6 +220,7 @@
 ### 🚀 Features
 
 - Kongfig initial public release
+  [v0.6.2]: https://github.com/pmarschik/kongfig/releases/tag/v0.6.2
   [v0.6.1]: https://github.com/pmarschik/kongfig/releases/tag/v0.6.1
   [v0.6.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.6.0
   [v0.5.0]: https://github.com/pmarschik/kongfig/releases/tag/v0.5.0

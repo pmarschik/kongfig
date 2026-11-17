@@ -309,11 +309,20 @@ func renderJSONLeaf(ctx context.Context, w io.Writer, k string, v any, path, pad
 		}
 	}
 
+	if isRV && rv.Redacted {
+		// render.Value would emit RedactedDisplay verbatim, which is not valid JSON.
+		// Encode the display text as a JSON string and let the styler wrap it.
+		leafVal = rv.RedactedDisplay
+	}
 	valBytes, err := json.Marshal(leafVal)
 	if err != nil {
 		return fmt.Errorf("json render: marshal key %q: %w", k, err)
 	}
-	line := fmt.Sprintf("%s%s: %s%s", pad, opts.s.Key(`"`+k+`"`), render.Value(opts.s, v, string(valBytes)), comma)
+	rendered := render.Value(opts.s, v, string(valBytes))
+	if isRV && rv.Redacted {
+		rendered = opts.s.Redacted(string(valBytes))
+	}
+	line := fmt.Sprintf("%s%s: %s%s", pad, opts.s.Key(`"`+k+`"`), rendered, comma)
 	if opts.p.Comments && isRV {
 		if ann := render.Annotation(ctx, rv, path, opts.s); ann != "" {
 			if opts.align {

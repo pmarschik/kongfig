@@ -3,6 +3,7 @@ package json_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -270,6 +271,25 @@ func TestRenderedValue_Redacted(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "***") {
 		t.Errorf("expected redacted display in output, got: %s", out)
+	}
+}
+
+func TestRenderedValue_RedactedIsValidJSON(t *testing.T) {
+	data := kongfig.ConfigData{
+		"api_token": kongfig.RenderedValue{Redacted: true, RedactedDisplay: "<redacted>"},
+		"host":      "localhost",
+	}
+	var buf bytes.Buffer
+	r := jsonparser.Default.Bind(plainStyler{})
+	if err := r.Render(context.Background(), &buf, data); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got["api_token"] != "<redacted>" {
+		t.Errorf("api_token = %v, want \"<redacted>\"", got["api_token"])
 	}
 }
 

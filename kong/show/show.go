@@ -230,10 +230,34 @@ func autoTTYOpt(w io.Writer) kongfig.RenderOption {
 	return nil
 }
 
+// colorDisabled reports whether styled output must be replaced by plain output:
+// the NO_COLOR convention (any non-empty value), TERM=dumb, a machine-readable
+// format (json), or a writer that is an [*os.File] but not a terminal.
+// Non-file writers (buffers) keep the caller's styler.
+func colorDisabled(w io.Writer, format string) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return true
+	}
+	if format == "json" {
+		return true
+	}
+	if f, ok := w.(*os.File); ok {
+		fd := f.Fd()
+		if fd > math.MaxInt {
+			return false
+		}
+		return !term.IsTerminal(int(fd))
+	}
+	return false
+}
+
 // Render writes configuration output to w using k as the data source.
 // Pass plain.New() as s to disable colors; pass nil to use plain automatically.
+// Colors are also disabled when NO_COLOR is set, TERM=dumb, the format is json,
+// or w is a file that is not a terminal.
 func (f *Flags) Render(ctx context.Context, w io.Writer, k *kongfig.Kongfig, s kongfig.Styler, opts ...kongfig.RenderOption) error {
-	if s == nil {
+	format := effectiveFormat(f.Format, k)
+	if s == nil || colorDisabled(w, format) {
 		s = plain.New()
 	}
 	// Auto-detect terminal size; caller opts can override.
@@ -245,7 +269,6 @@ func (f *Flags) Render(ctx context.Context, w io.Writer, k *kongfig.Kongfig, s k
 	allOpts := append(append(ttyOpt, f.Options(k)...), opts...)
 
 	renderers := buildFormatRenderers(k)
-	format := effectiveFormat(f.Format, k)
 	if f.Layers {
 		if format != "" {
 			allOpts = append(allOpts, kongfig.WithRenderFormat(format))
@@ -293,7 +316,8 @@ func (f *SimpleFlags) Options(k *kongfig.Kongfig) []kongfig.RenderOption {
 // Render writes configuration output to w using k as the data source.
 // When Plain is true the styler is overridden with plain.New().
 func (f *SimpleFlags) Render(ctx context.Context, w io.Writer, k *kongfig.Kongfig, s kongfig.Styler, opts ...kongfig.RenderOption) error {
-	if s == nil || f.Plain {
+	format := effectiveFormat("", k)
+	if s == nil || f.Plain || colorDisabled(w, format) {
 		s = plain.New()
 	}
 	var ttyOpt []kongfig.RenderOption
@@ -303,7 +327,6 @@ func (f *SimpleFlags) Render(ctx context.Context, w io.Writer, k *kongfig.Kongfi
 	allOpts := append(append(ttyOpt, f.Options(k)...), opts...)
 
 	renderers := buildFormatRenderers(k)
-	format := effectiveFormat("", k)
 	if f.Layers {
 		return renderPerLayer(ctx, w, k, format, f.Verbose, s, f.DefaultRenderer, renderers, allOpts...)
 	}

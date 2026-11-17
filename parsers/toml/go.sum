@@ -2,9 +2,9 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/go-viper/mapstructure/v2 v2.5.0 h1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro=
 github.com/go-viper/mapstructure/v2 v2.5.0/go.mod h1:oJDH3BJKyqBA2TXFhDsKDGDTlndYOZ6rGS0BRZIxGhM=
-github.com/pmarschik/kongfig v0.6.1 h1:XHDUJJs4D8XBd/3FEOeUvBZja6NRHikY+NB2tiA9Fo0=
-github.com/pmarschik/kongfig v0.6.1/go.mod h1:gwYShMLy4DX0xWZ+YVcxfySW6Q16YJwUI1JugiUm/+o=
-github.com/pmarschik/kongfig/parsers/yaml v0.6.1 h1:vYhNvBfUhJB6Qqwk5AdTbvp4PapY0h195pLo+EOnszI=
-github.com/pmarschik/kongfig/parsers/yaml v0.6.1/go.mod h1:Iyq5EWbZiNhdbYK/9FcF7bPq+JTX1H3dy/5wjlwcHcU=
+github.com/pmarschik/kongfig v0.6.2 h1:W0SQLk8poMZnkueUx/GNtU/3M5CCqFKXv7Sw+gC2MCw=
+github.com/pmarschik/kongfig v0.6.2/go.mod h1:VDlIwZQltfzqSoVRAl1igFS2mY9f0dPsBGg2EYPMgRs=
+github.com/pmarschik/kongfig/parsers/yaml v0.6.2 h1:4HOOgZlLBfpiHjnG3QQVREshp/3bhOlaGUixcCCaXG0=
+github.com/pmarschik/kongfig/parsers/yaml v0.6.2/go.mod h1:xcuQXYOXcyUxmQwgOUbo2UzweWL7QXcjzuBJlHGna8c=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
